@@ -1,0 +1,113 @@
+[
+  {
+    "target_tokens": 100,
+    "actual_tokens": 79,
+    "kv_transfer_mb": 9.875,
+    "avg_time_s": 0.06161179952323437,
+    "avg_bandwidth_mb_s": 160.793928939553,
+    "avg_bandwidth_gb_s": 0.15702532123003224,
+    "iterations": [
+      {
+        "iteration": 1,
+        "prompt_tokens": 79,
+        "elapsed_time_s": 0.08473707363009453,
+        "kv_transfer_bytes": 10354688,
+        "kv_transfer_mb": 9.875,
+        "apparent_bandwidth_mb_s": 116.53694866909913,
+        "apparent_bandwidth_gb_s": 0.11380561393466712
+      },
+      {
+        "iteration": 2,
+        "prompt_tokens": 79,
+        "elapsed_time_s": 0.06510266661643982,
+        "kv_transfer_bytes": 10354688,
+        "kv_transfer_mb": 9.875,
+        "apparent_bandwidth_mb_s": 151.68349490474404,
+        "apparent_bandwidth_gb_s": 0.1481284129929141
+      },
+      {
+        "iteration": 3,
+        "prompt_tokens": 79,
+        "elapsed_time_s": 0.058120932430028915,
+        "kv_transfer_bytes": 10354688,
+        "kv_transfer_mb": 9.875,
+        "apparent_bandwidth_mb_s": 169.904362974362,
+        "apparent_bandwidth_gb_s": 0.16592222946715038
+      }
+    ]
+  },
+  {
+    "target_tokens": 500,
+    "actual_tokens": 387,
+    "kv_transfer_mb": 48.375,
+    "avg_time_s": 0.05852106213569641,
+    "avg_bandwidth_mb_s": 828.9123445578925,
+    "avg_bandwidth_gb_s": 0.8094847114823169,
+    "iterations": [
+      {
+        "iteration": 1,
+        "prompt_tokens": 387,
+        "elapsed_time_s": 0.061030738055706024,
+        "kv_transfer_bytes": 50724864,
+        "kv_transfer_mb": 48.375,
+        "apparent_bandwidth_mb_s": 792.6333769033818,
+        "apparent_bandwidth_gb_s": 0.7740560321322087
+      },
+      {
+        "iteration": 2,
+        "prompt_tokens": 387,
+        "elapsed_time_s": 0.055447231978178024,
+        "kv_transfer_bytes": 50724864,
+        "kv_transfer_mb": 48.375,
+        "apparent_bandwidth_mb_s": 872.4511264879482,
+        "apparent_bandwidth_gb_s": 0.8520030532108869
+      },
+      {
+        "iteration": 3,
+        "prompt_tokens": 387,
+        "elapsed_time_s": 0.0615948922932148,
+        "kv_transfer_bytes": 50724864,
+        "kv_transfer_mb": 48.375,
+        "apparent_bandwidth_mb_s": 785.3735626278369,
+        "apparent_bandwidth_gb_s": 0.766966369753747
+      }
+    ]
+  },
+  {
+    "target_tokens": 1000,
+    "actual_tokens": 772,
+    "kv_transfer_mb": 96.5,
+    "avg_time_s": 0.05801277048885822,
+    "avg_bandwidth_mb_s": 1665.3990957042408,
+    "avg_bandwidth_gb_s": 1.6263663043986727,
+    "iterations": [
+      {
+        "iteration": 1,
+        "prompt_tokens": 772,
+        "elapsed_time_s": 0.06871567294001579,
+        "kv_transfer_bytes": 101187584,
+        "kv_transfer_mb": 96.5,
+        "apparent_bandwidth_mb_s": 1404.337553155276,
+        "apparent_bandwidth_gb_s": 1.3714233917531993
+      },
+      {
+        "iteration": 2,
+        "prompt_tokens": 772,
+        "elapsed_time_s": 0.056016381829977036,
+        "kv_transfer_bytes": 101187584,
+        "kv_transfer_mb": 96.5,
+        "apparent_bandwidth_mb_s": 1722.7103366458105,
+        "apparent_bandwidth_gb_s": 1.6823343131306743
+      },
+      {
+        "iteration": 3,
+        "prompt_tokens": 772,
+        "elapsed_time_s": 0.06000915914773941,
+        "kv_transfer_bytes": 101187584,
+        "kv_transfer_mb": 96.5,
+        "apparent_bandwidth_mb_s": 1608.0878547626712,
+        "apparent_bandwidth_gb_s": 1.570398295666671
+      }
+    ]
+  }
+]
