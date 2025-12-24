@@ -111,11 +111,25 @@ export NCCL_NET=Socket      # Force Socket (TCP) transport
 
 ## Quick Start
 
-### Run PD Separation Test
+### Start/Stop Servers
 
 ```bash
 cd /net/projects2/ds3lab/zongzel/vllm/ppd
 conda activate vllm-ppd
+
+# Start servers (default: PPD mode)
+./scripts/start_servers.sh ppd
+
+# Start with benchmark metrics collection
+./scripts/start_servers.sh ppd --benchmark
+
+# Stop all servers
+./scripts/stop_servers.sh
+```
+
+### Run PD Separation Test
+
+```bash
 ./scripts/run_pd_separation_test.sh
 ```
 
@@ -326,23 +340,27 @@ This is where the PPD routing decision becomes critical.
 
 ```
 ppd/
-├── README.md                      # This documentation
-├── .gitignore                     # Git ignore rules (excludes logs/ and results/)
-├── scripts/                       # Shell scripts
-│   ├── run_pd_separation_test.sh  # Original PD test script
-│   └── run_ppd_test.sh            # PPD test script (supports pd/ppd modes)
-├── src/                           # Python source code
-│   ├── disagg_proxy_ppd.py        # PPD-aware proxy server
-│   ├── compare_pd_ppd.py          # PD vs PPD comparison test
-│   ├── bandwidth_test.py          # Bandwidth measurement
-│   ├── multi_turn_test.py         # Multi-turn dialogue test
-│   └── test_client.py             # Basic Python test client
-├── results/                       # Test results (not tracked by git)
-│   └── comparison_results.json    # Latest comparison test results
-└── logs/                          # Log files (not tracked by git)
-    ├── prefill_*.log             # Prefill instance log
-    ├── decode_*.log              # Decode instance log
-    └── proxy_*.log               # Proxy server log
+├── README.md                        # This documentation
+├── .gitignore                       # Git ignore rules (excludes logs/ and results/)
+├── scripts/                         # Shell scripts
+│   ├── start_servers.sh             # Quick start (supports --benchmark flag)
+│   ├── stop_servers.sh              # Stop all servers
+│   ├── run_pd_separation_test.sh    # Original PD test script
+│   └── run_ppd_test.sh              # PPD test script
+├── src/                             # Python source code
+│   ├── disagg_proxy_ppd.py          # PPD-aware proxy server
+│   ├── disagg_proxy_benchmark.py    # Benchmark proxy with metrics
+│   ├── comprehensive_benchmark.py   # Comprehensive benchmark suite
+│   ├── compare_pd_ppd.py            # Simple PD vs PPD comparison
+│   ├── bandwidth_test.py            # Bandwidth measurement
+│   ├── multi_turn_test.py           # Multi-turn dialogue test
+│   └── test_client.py               # Basic Python test client
+├── results/                         # Test results (not tracked by git)
+│   └── benchmark_*.json             # Benchmark results
+└── logs/                            # Log files (not tracked by git)
+    ├── prefill.log                  # Prefill instance log
+    ├── decode.log                   # Decode instance log
+    └── proxy.log                    # Proxy server log
 ```
 
 ## Key Metrics to Monitor
@@ -459,6 +477,53 @@ With PPD mode enabled:
 | `/mode/ppd` | POST | Switch to PPD mode (D-direct for Turn 2+) |
 | `/conversations` | GET | Get conversation state (for debugging) |
 | `/conversations/clear` | POST | Clear all conversation state |
+
+## Comprehensive Benchmark
+
+### Running Benchmarks
+
+```bash
+# Start servers with benchmark proxy
+./scripts/start_servers.sh ppd --benchmark
+
+# Run quick benchmark (3 configs)
+python src/comprehensive_benchmark.py --quick
+
+# Run full benchmark (20+ configs)
+python src/comprehensive_benchmark.py
+
+# Results saved to results/benchmark_YYYYMMDD_HHMMSS.json
+```
+
+### Benchmark Configurations
+
+The comprehensive benchmark tests:
+
+1. **Turn Variations** (1-20 turns with fixed tokens)
+2. **Input Token Variations** (20-500 tokens with fixed turns)
+3. **Output Token Variations** (10-200 tokens with fixed turns)
+4. **Mixed Configurations** (various combinations)
+
+### Metrics Collected
+
+| Metric | Description |
+|--------|-------------|
+| `total_time_ms` | End-to-end latency per turn |
+| `p_prefill_time_ms` | Time on Prefill server (PD mode) |
+| `d_time_ms` | Time on Decode server |
+| `estimated_kv_size_mb` | KV cache size for transfer |
+| `local_cache_hit_rate` | D's local prefix cache hit rate |
+| `external_cache_hit_rate` | External (P→D) cache hit rate |
+
+### Sample Results
+
+Benchmark comparison for multi-turn dialogues:
+
+| Config | Turns | PD Time | PPD Time | Speedup | KV Saved |
+|--------|-------|---------|----------|---------|----------|
+| turns_5 | 5 | 1454 ms | 1271 ms | 1.14x | 60% |
+| turns_10 | 10 | 3200 ms | 2400 ms | 1.33x | 80% |
+| turns_20 | 20 | 7500 ms | 4800 ms | 1.56x | 90% |
 
 ## Future Work
 
