@@ -116,7 +116,7 @@ export NCCL_NET=Socket      # Force Socket (TCP) transport
 ```bash
 cd /net/projects2/ds3lab/zongzel/vllm/ppd
 conda activate vllm-ppd
-./run_pd_separation_test.sh
+./scripts/run_pd_separation_test.sh
 ```
 
 The script automatically cleans old logs and keeps only the latest run.
@@ -126,7 +126,7 @@ The script automatically cleans old logs and keeps only the latest run.
 After the PD separation test is running:
 
 ```bash
-python bandwidth_test.py --prompt-lengths 100 500 1000 --iterations 3
+python src/bandwidth_test.py --prompt-lengths 100 500 1000 --iterations 3
 ```
 
 ## KV Cache Transfer Bandwidth
@@ -277,10 +277,10 @@ vLLM has built-in prefix caching that helps D reuse KV cache:
 
 ```bash
 # Start PD servers first
-./run_pd_separation_test.sh &
+./scripts/run_pd_separation_test.sh &
 
 # Wait for initialization, then run multi-turn test
-python multi_turn_test.py --turns 5 --input-tokens 100 --output-tokens 30
+python src/multi_turn_test.py --turns 5 --input-tokens 100 --output-tokens 30
 
 # Check cache hit rates in decode logs
 grep "prefix cache" logs/decode_*.log
@@ -326,17 +326,23 @@ This is where the PPD routing decision becomes critical.
 
 ```
 ppd/
-├── README.md                    # This documentation
-├── run_pd_separation_test.sh    # Main PD test script (auto-cleans logs)
-├── bandwidth_test.py            # Bandwidth measurement and verification
-├── multi_turn_test.py           # Multi-turn dialogue test
-├── test_client.py               # Basic Python test client
-├── bandwidth_results.json       # Latest bandwidth test results
-├── multi_turn_results.json      # Latest multi-turn test results
-└── logs/                        # Log directory (latest run only)
-    ├── prefill_*.log           # Prefill instance log
-    ├── decode_*.log            # Decode instance log
-    └── proxy_*.log             # Proxy server log
+├── README.md                      # This documentation
+├── .gitignore                     # Git ignore rules (excludes logs/ and results/)
+├── scripts/                       # Shell scripts
+│   ├── run_pd_separation_test.sh  # Original PD test script
+│   └── run_ppd_test.sh            # PPD test script (supports pd/ppd modes)
+├── src/                           # Python source code
+│   ├── disagg_proxy_ppd.py        # PPD-aware proxy server
+│   ├── compare_pd_ppd.py          # PD vs PPD comparison test
+│   ├── bandwidth_test.py          # Bandwidth measurement
+│   ├── multi_turn_test.py         # Multi-turn dialogue test
+│   └── test_client.py             # Basic Python test client
+├── results/                       # Test results (not tracked by git)
+│   └── comparison_results.json    # Latest comparison test results
+└── logs/                          # Log files (not tracked by git)
+    ├── prefill_*.log             # Prefill instance log
+    ├── decode_*.log              # Decode instance log
+    └── proxy_*.log               # Proxy server log
 ```
 
 ## Key Metrics to Monitor
@@ -355,24 +361,114 @@ grep "prefix cache" logs/decode_*.log
 ### From Bandwidth Test
 
 ```bash
-python bandwidth_test.py --prompt-lengths 100 500 1000 --iterations 3
+python src/bandwidth_test.py --prompt-lengths 100 500 1000 --iterations 3
 ```
 
 ### From Multi-Turn Test
 
 ```bash
-python multi_turn_test.py --turns 5 --input-tokens 100 --output-tokens 30 --output results.json
+python src/multi_turn_test.py --turns 5 --input-tokens 100 --output-tokens 30
 ```
+
+## PPD Mode (Implemented)
+
+PPD (Prefill-Prefill-Decode direct) mode optimizes multi-turn dialogues by routing subsequent turns directly to the Decode machine, bypassing the Prefill machine and KV transfer overhead.
+
+### Routing Modes
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `pd` | Always P → D for every turn | Single-turn requests, baseline comparison |
+| `ppd` | Turn 1: P → D, Turn 2+: D-direct | Multi-turn dialogues |
+
+### How D-Direct Mode Works
+
+```
+PD Mode (every turn):
+  Proxy → P (prefill all) → [KV Transfer] → D (decode) → Response
+
+PPD Mode:
+  Turn 1: Proxy → P (prefill) → [KV Transfer] → D (decode) → Response
+  Turn 2+: Proxy → D directly (uses local prefix cache) → Response
+```
+
+### Implementation Details
+
+1. **Modified P2pNcclConnector** (`vllm/distributed/kv_transfer/kv_connector/v1/p2p/p2p_nccl_connector.py`):
+   - Added `is_pd_request()` to detect PD vs D-direct requests based on request_id format
+   - D-direct requests (no special format) return 0 external tokens, forcing use of local prefix cache
+
+2. **PPD-Aware Proxy** (`disagg_proxy_ppd.py`):
+   - Tracks conversation state via prompt hash
+   - Routes Turn 1 with special request_id format (triggers P→D flow)
+   - Routes Turn 2+ with normal request_id (D-direct mode)
+
+### Running PPD Tests
+
+```bash
+cd /net/projects2/ds3lab/zongzel/vllm/ppd
+
+# Start with PPD mode
+./scripts/run_ppd_test.sh ppd
+
+# Run comparison test (tests both PD and PPD modes)
+python src/compare_pd_ppd.py --turns 5 --output-tokens 30
+
+# Switch modes dynamically
+curl -X POST http://localhost:10001/mode/pd   # Switch to PD mode
+curl -X POST http://localhost:10001/mode/ppd  # Switch to PPD mode
+
+# Check current mode
+curl http://localhost:10001/mode
+
+# Clear conversation state
+curl -X POST http://localhost:10001/conversations/clear
+```
+
+### Performance Results
+
+5-turn conversation with 30 output tokens per turn:
+
+| Turn | PD Mode (ms) | PPD Mode (ms) | Speedup | PPD Note |
+|------|--------------|---------------|---------|----------|
+| 1 | 144.4 | 140.3 | 1.03x | P→D |
+| 2 | 407.2 | 240.6 | 1.69x | D-direct |
+| 3 | 296.6 | 297.5 | 1.00x | D-direct |
+| 4 | 305.6 | 294.4 | 1.04x | D-direct |
+| 5 | 300.4 | 298.1 | 1.01x | D-direct |
+| **Total** | **1454.2** | **1271.0** | **1.14x** | |
+
+**Key Observations:**
+- Turn 1: Similar latency (both use P→D flow)
+- Turn 2: Significant speedup (1.69x) as PPD skips P→D overhead
+- Turn 3+: Similar latency, D handles prefill efficiently with local cache
+- Overall: **14% latency reduction** with PPD mode
+
+### Cache Hit Rates
+
+With PPD mode enabled:
+- **Local Prefix Cache Hit Rate: 72.3%** (D reuses its own cache)
+- **External Prefix Cache Hit Rate: 26.0%** (from P→D transfer in Turn 1)
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/mode` | GET | Get current routing mode |
+| `/mode/pd` | POST | Switch to PD mode (always P→D) |
+| `/mode/ppd` | POST | Switch to PPD mode (D-direct for Turn 2+) |
+| `/conversations` | GET | Get conversation state (for debugging) |
+| `/conversations/clear` | POST | Clear all conversation state |
 
 ## Future Work
 
-1. **PPD Routing Logic:** Implement intelligent routing decisions based on:
+1. **Selective KV Transfer:** Modify P2pNcclConnector to transfer only new KV blocks
+
+2. **Real-time Metrics:** Add transfer timing instrumentation inside P2pNcclConnector
+
+3. **Multi-D Scaling:** Test with multiple decode instances for load balancing
+
+4. **Adaptive Routing:** Dynamically choose PD vs D-direct based on:
    - Cache hit rate on D
    - New prompt length
    - Network bandwidth vs. compute trade-off
-
-2. **Selective KV Transfer:** Modify P2pNcclConnector to transfer only new KV blocks
-
-3. **Real-time Metrics:** Add transfer timing instrumentation inside P2pNcclConnector
-
-4. **Multi-D Scaling:** Test with multiple decode instances for load balancing

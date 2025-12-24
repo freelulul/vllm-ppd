@@ -351,8 +351,21 @@ class P2pNcclConnector(KVConnectorBase_V1):
         Returns:
             the number of tokens that can be loaded from the
             external KV cache beyond what is already computed.
+
+        Note:
+            For D-direct mode (request without PD format request_id),
+            returns 0 to skip external KV loading and use local prefix cache.
         """
         if self.is_producer:
+            return 0, False
+
+        # Check if this is a PD request (has special request_id format)
+        # If not, this is a D-direct request - use local prefix cache only
+        if not self.is_pd_request(request.request_id):
+            logger.debug(
+                "D-direct mode: request %s will use local prefix cache only",
+                request.request_id[:50] if len(request.request_id) > 50 else request.request_id
+            )
             return 0, False
 
         prompt_token_ids = request.prompt_token_ids or []
@@ -498,6 +511,18 @@ class P2pNcclConnector(KVConnectorBase_V1):
     # ==============================
     # Static methods
     # ==============================
+
+    @staticmethod
+    def is_pd_request(request_id: str) -> bool:
+        """
+        Check if a request_id contains the special PD format.
+
+        PD format: ___prefill_addr_xxx___decode_addr_xxx___uuid
+
+        If True, this request expects KV cache transfer from P to D.
+        If False, this is a direct request (D should use local prefix cache).
+        """
+        return "___prefill_addr_" in request_id and "___decode_addr_" in request_id
 
     @staticmethod
     def parse_request_id(request_id: str, is_prefill=True) -> tuple[str, int]:

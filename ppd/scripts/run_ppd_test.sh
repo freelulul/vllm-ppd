@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================================
-# vLLM PD Separation Test Script (using P2pNcclConnector with xpyd proxy)
-# This script runs disaggregated prefill/decode on two H100 GPUs using TCP
+# vLLM PPD Test Script
+# Tests both PD mode and PPD mode for comparison
 # ============================================================================
 
 set -e
@@ -10,22 +10,25 @@ set -e
 MODEL_PATH="/net/projects2/ds3lab/zongzel/models--meta-llama--Llama-3.1-8B"
 PREFILL_PORT=8100
 DECODE_PORT=8200
-PROXY_PORT=10001       # xpyd proxy uses 10001
+PROXY_PORT=10001
 PROXY_CONTROL_PORT=30001
 KV_PORT_PREFILL=14579
 KV_PORT_DECODE=14580
 
-# Maximum model length (adjust based on your memory)
 MAX_MODEL_LEN=2048
 GPU_MEMORY_UTIL=0.85
 
-# Log directory
-LOG_DIR="$(dirname "$0")/logs"
+# Routing mode: pd or ppd
+MODE="${1:-ppd}"
+
+# Directory setup
+SCRIPT_DIR="$(dirname "$0")"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+LOG_DIR="$PROJECT_DIR/logs"
+SRC_DIR="$PROJECT_DIR/src"
 mkdir -p "$LOG_DIR"
 
-# ============================================================================
-# Auto-clean old logs - keep only the latest run
-# ============================================================================
+# Auto-clean old logs
 echo "[CLEANUP] Removing old log files..."
 rm -f "$LOG_DIR"/prefill_*.log 2>/dev/null || true
 rm -f "$LOG_DIR"/decode_*.log 2>/dev/null || true
@@ -35,23 +38,22 @@ echo "[CLEANUP] Old logs removed"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 echo "=============================================="
-echo "vLLM PD Separation Test (P2pNcclConnector)"
+echo "vLLM PPD Test (Mode: $MODE)"
 echo "=============================================="
 echo "Model: $MODEL_PATH"
 echo "Prefill Port: $PREFILL_PORT (GPU 0)"
 echo "Decode Port: $DECODE_PORT (GPU 1)"
 echo "Proxy Port: $PROXY_PORT"
-echo "Max Model Len: $MAX_MODEL_LEN"
-echo "Log Directory: $LOG_DIR"
+echo "Routing Mode: $MODE"
+echo "  - pd:  Always P -> D"
+echo "  - ppd: First turn P -> D, rest direct to D"
 echo "=============================================="
 
-# ============================================================================
-# Environment Setup - Force TCP transport (disable RDMA/NVLink for KV transfer)
-# ============================================================================
-export NCCL_IB_DISABLE=1           # Disable InfiniBand
-export NCCL_NET=Socket             # Force Socket (TCP) transport
-export NCCL_DEBUG=WARN             # Set NCCL debug level
-export VLLM_LOGGING_LEVEL=INFO     # vLLM logging level
+# Environment Setup - Force TCP transport
+export NCCL_IB_DISABLE=1
+export NCCL_NET=Socket
+export NCCL_DEBUG=WARN
+export VLLM_LOGGING_LEVEL=INFO
 
 echo ""
 echo "[ENV] NCCL_IB_DISABLE=1 (InfiniBand disabled)"
@@ -63,39 +65,38 @@ cleanup() {
     echo ""
     echo "[CLEANUP] Stopping all processes..."
     pkill -f "vllm serve.*$MODEL_PATH" 2>/dev/null || true
-    pkill -f "disagg_proxy_p2p_nccl_xpyd" 2>/dev/null || true
+    pkill -f "disagg_proxy" 2>/dev/null || true
     sleep 2
     echo "[CLEANUP] Done"
 }
 
-# Trap signals for cleanup
 trap cleanup EXIT INT TERM
 
-# Kill any existing vllm processes
+# Kill existing processes
 echo "[INIT] Cleaning up existing processes..."
 cleanup
 sleep 2
 
 # ============================================================================
-# Start xpyd Proxy Server FIRST (it needs to be running for service discovery)
+# Start PPD Proxy Server
 # ============================================================================
 echo ""
-echo "[PROXY] Starting P2pNccl xpyd proxy server..."
+echo "[PROXY] Starting PPD Proxy (mode: $MODE)..."
 
-PROXY_SCRIPT="/net/projects2/ds3lab/zongzel/vllm/examples/online_serving/disaggregated_serving_p2p_nccl_xpyd/disagg_proxy_p2p_nccl_xpyd.py"
-
-python "$PROXY_SCRIPT" \
+python "$SRC_DIR/disagg_proxy_ppd.py" \
+    --mode "$MODE" \
+    --http-port $PROXY_PORT \
+    --zmq-port $PROXY_CONTROL_PORT \
     > "$LOG_DIR/proxy_${TIMESTAMP}.log" 2>&1 &
 
 PROXY_PID=$!
 echo "[PROXY] Started with PID: $PROXY_PID"
 echo "[PROXY] Log: $LOG_DIR/proxy_${TIMESTAMP}.log"
-echo "[PROXY] Listening on port $PROXY_PORT (HTTP) and $PROXY_CONTROL_PORT (ZMQ service discovery)"
 
 sleep 3
 
 # ============================================================================
-# Start Prefill Instance (GPU 0 - KV Producer)
+# Start Prefill Instance (GPU 0)
 # ============================================================================
 echo ""
 echo "[PREFILL] Starting Prefill instance on GPU 0..."
@@ -123,10 +124,9 @@ CUDA_VISIBLE_DEVICES=0 vllm serve "$MODEL_PATH" \
 
 PREFILL_PID=$!
 echo "[PREFILL] Started with PID: $PREFILL_PID"
-echo "[PREFILL] Log: $LOG_DIR/prefill_${TIMESTAMP}.log"
 
 # ============================================================================
-# Start Decode Instance (GPU 1 - KV Consumer)
+# Start Decode Instance (GPU 1)
 # ============================================================================
 echo ""
 echo "[DECODE] Starting Decode instance on GPU 1..."
@@ -154,15 +154,14 @@ CUDA_VISIBLE_DEVICES=1 vllm serve "$MODEL_PATH" \
 
 DECODE_PID=$!
 echo "[DECODE] Started with PID: $DECODE_PID"
-echo "[DECODE] Log: $LOG_DIR/decode_${TIMESTAMP}.log"
 
 # ============================================================================
-# Wait for servers to be ready
+# Wait for servers
 # ============================================================================
 wait_for_server() {
     local port=$1
     local name=$2
-    local max_wait=300  # 5 minutes timeout
+    local max_wait=300
     local waited=0
 
     echo "[WAIT] Waiting for $name server on port $port..."
@@ -171,7 +170,6 @@ wait_for_server() {
         waited=$((waited + 2))
         if [ $waited -ge $max_wait ]; then
             echo "[ERROR] Timeout waiting for $name server"
-            echo "[ERROR] Check log: $LOG_DIR/${name,,}_${TIMESTAMP}.log"
             tail -50 "$LOG_DIR/${name,,}_${TIMESTAMP}.log"
             exit 1
         fi
@@ -186,94 +184,40 @@ echo ""
 wait_for_server $PREFILL_PORT "Prefill"
 wait_for_server $DECODE_PORT "Decode"
 
-# Give some time for service discovery registration
 echo ""
-echo "[WAIT] Waiting for service discovery registration..."
+echo "[WAIT] Waiting for service discovery..."
 sleep 5
 
-# Check proxy logs for registration
-echo "[CHECK] Checking proxy for registered instances..."
-grep -E "Add|HTTP" "$LOG_DIR/proxy_${TIMESTAMP}.log" | tail -5 || echo "No registrations yet"
+# Check mode
+echo ""
+echo "[CHECK] Current proxy mode:"
+curl -s "http://localhost:$PROXY_PORT/mode" | python3 -m json.tool 2>/dev/null || echo "Could not get mode"
 
-# ============================================================================
-# Run Test Requests
-# ============================================================================
 echo ""
 echo "=============================================="
-echo "Running Test Requests"
+echo "Servers Ready! Mode: $MODE"
 echo "=============================================="
-
-# Test 1: Simple short prompt
 echo ""
-echo "[TEST 1] Short prompt test..."
-START_TIME=$(date +%s.%N)
-RESPONSE1=$(curl -s -X POST "http://localhost:$PROXY_PORT/v1/completions" \
-    -H "Content-Type: application/json" \
-    --max-time 120 \
-    -d '{
-        "model": "'"$MODEL_PATH"'",
-        "prompt": "San Francisco is a",
-        "max_tokens": 20,
-        "temperature": 0
-    }')
-END_TIME=$(date +%s.%N)
-ELAPSED=$(echo "$END_TIME - $START_TIME" | bc)
-echo "Response 1 (${ELAPSED}s): $RESPONSE1"
-
-# Test 2: Another short prompt
+echo "Test commands:"
+echo "  # Run multi-turn comparison test"
+echo "  python src/compare_pd_ppd.py"
 echo ""
-echo "[TEST 2] Another short prompt test..."
-START_TIME=$(date +%s.%N)
-RESPONSE2=$(curl -s -X POST "http://localhost:$PROXY_PORT/v1/completions" \
-    -H "Content-Type: application/json" \
-    --max-time 120 \
-    -d '{
-        "model": "'"$MODEL_PATH"'",
-        "prompt": "The capital of France is",
-        "max_tokens": 20,
-        "temperature": 0
-    }')
-END_TIME=$(date +%s.%N)
-ELAPSED=$(echo "$END_TIME - $START_TIME" | bc)
-echo "Response 2 (${ELAPSED}s): $RESPONSE2"
-
-# Test 3: Longer prompt
+echo "  # Check current mode"
+echo "  curl http://localhost:$PROXY_PORT/mode"
 echo ""
-echo "[TEST 3] Longer prompt test..."
-START_TIME=$(date +%s.%N)
-RESPONSE3=$(curl -s -X POST "http://localhost:$PROXY_PORT/v1/completions" \
-    -H "Content-Type: application/json" \
-    --max-time 120 \
-    -d '{
-        "model": "'"$MODEL_PATH"'",
-        "prompt": "In the field of artificial intelligence, large language models have become increasingly important. These models are trained on vast amounts of text data and can generate human-like responses. The key innovation is",
-        "max_tokens": 50,
-        "temperature": 0
-    }')
-END_TIME=$(date +%s.%N)
-ELAPSED=$(echo "$END_TIME - $START_TIME" | bc)
-echo "Response 3 (${ELAPSED}s): $RESPONSE3"
-
-# ============================================================================
-# Summary
-# ============================================================================
+echo "  # Switch mode (while running)"
+echo "  curl -X POST http://localhost:$PROXY_PORT/mode/pd"
+echo "  curl -X POST http://localhost:$PROXY_PORT/mode/ppd"
 echo ""
-echo "=============================================="
-echo "Test Complete!"
-echo "=============================================="
+echo "  # Clear conversation state"
+echo "  curl -X POST http://localhost:$PROXY_PORT/conversations/clear"
 echo ""
 echo "Log files:"
 echo "  - Prefill: $LOG_DIR/prefill_${TIMESTAMP}.log"
 echo "  - Decode:  $LOG_DIR/decode_${TIMESTAMP}.log"
 echo "  - Proxy:   $LOG_DIR/proxy_${TIMESTAMP}.log"
 echo ""
-echo "To check logs:"
-echo "  tail -f $LOG_DIR/prefill_${TIMESTAMP}.log"
-echo "  tail -f $LOG_DIR/decode_${TIMESTAMP}.log"
-echo "  tail -f $LOG_DIR/proxy_${TIMESTAMP}.log"
-echo ""
-echo "Servers are still running. Press Ctrl+C to stop."
+echo "Press Ctrl+C to stop."
 echo ""
 
-# Keep running until interrupted
 wait
