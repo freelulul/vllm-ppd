@@ -233,9 +233,146 @@ kill -9 <PID>
 - Initial model loading takes several minutes
 - Check logs to confirm loading progress
 
+## Multi-Turn Dialogue Support
+
+### Understanding Multi-Turn PD Separation
+
+In multi-turn dialogue scenarios, the key question is: **where should subsequent prompts be processed?**
+
+```
+Turn 1: User prompt → P (prefill) → [KV Transfer] → D (decode) → Response
+Turn 2: User prompt → ???
+        Option A: → P (prefill all) → [Full KV Transfer] → D → Response
+        Option B: → D directly (reuse cached KV, prefill new tokens locally)
+```
+
+### Current Proxy Behavior (xpyd)
+
+The current `disagg_proxy_p2p_nccl_xpyd.py` **always routes to P first**:
+
+1. Every turn: Proxy sends request to P with `max_tokens=1`
+2. P computes prefill for **entire context** (cumulative)
+3. P transfers **full KV cache** to D
+4. Proxy then sends original request to D for decoding
+
+### vLLM's KV Cache Reuse Mechanism
+
+vLLM has built-in prefix caching that helps D reuse KV cache:
+
+| Metric | Description |
+|--------|-------------|
+| `Prefix cache hit rate` | Local cache reuse on D (previous turns) |
+| `External prefix cache hit rate` | KV cache from P→D transfer |
+
+**Observed Results from Multi-Turn Test:**
+
+| Scenario | Local Prefix Cache | External (P→D) Cache |
+|----------|--------------------|-----------------------|
+| Single requests | 0.0% | 93.8% |
+| Multi-turn dialogue | **64.4%** | 35.0% |
+
+**Key Insight:** D machine IS reusing KV cache locally across turns (64.4% hit rate)!
+
+### Running Multi-Turn Test
+
+```bash
+# Start PD servers first
+./run_pd_separation_test.sh &
+
+# Wait for initialization, then run multi-turn test
+python multi_turn_test.py --turns 5 --input-tokens 100 --output-tokens 30
+
+# Check cache hit rates in decode logs
+grep "prefix cache" logs/decode_*.log
+```
+
+### Multi-Turn Test Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--turns` | Number of conversation turns | 5 |
+| `--input-tokens` | Approximate input tokens per turn | 100 |
+| `--output-tokens` | Output tokens per turn | 50 |
+| `--format` | API format (chat/completion) | completion |
+| `--output` | JSON file for results | None |
+
+### Performance Characteristics
+
+For a 5-turn conversation with ~100 tokens per turn:
+
+| Turn | Cumulative Tokens | KV Size | Latency |
+|------|-------------------|---------|---------|
+| 1 | 91 | 11.38 MB | ~150 ms |
+| 2 | 189 | 23.62 MB | ~160 ms |
+| 3 | 288 | 36.00 MB | ~165 ms |
+| 4 | 387 | 48.38 MB | ~150 ms |
+| 5 | 485 | 60.62 MB | ~165 ms |
+
+**Note:** Latency remains relatively stable due to D's local prefix cache reuse!
+
+### PPD Optimization Opportunity
+
+The current flow has inefficiency:
+- **Current:** Every turn transfers FULL cumulative KV cache from P→D
+- **Ideal:** Only transfer KV for NEW tokens each turn
+
+For a 10-turn conversation with 100 tokens each:
+- **Current transfer:** 100 + 200 + 300 + ... + 1000 = 5500 × 128KB = 688 MB
+- **Optimal transfer:** 100 × 10 × 128KB = 125 MB (5.5x reduction!)
+
+This is where the PPD routing decision becomes critical.
+
+## File Structure
+
+```
+ppd/
+├── README.md                    # This documentation
+├── run_pd_separation_test.sh    # Main PD test script (auto-cleans logs)
+├── bandwidth_test.py            # Bandwidth measurement and verification
+├── multi_turn_test.py           # Multi-turn dialogue test
+├── test_client.py               # Basic Python test client
+├── bandwidth_results.json       # Latest bandwidth test results
+├── multi_turn_results.json      # Latest multi-turn test results
+└── logs/                        # Log directory (latest run only)
+    ├── prefill_*.log           # Prefill instance log
+    ├── decode_*.log            # Decode instance log
+    └── proxy_*.log             # Proxy server log
+```
+
+## Key Metrics to Monitor
+
+### From Decode Logs
+
+```bash
+# Monitor cache hit rates
+grep "prefix cache" logs/decode_*.log
+
+# Example output:
+# Prefix cache hit rate: 64.4%        ← Local D cache reuse
+# External prefix cache hit rate: 35.0% ← From P→D transfer
+```
+
+### From Bandwidth Test
+
+```bash
+python bandwidth_test.py --prompt-lengths 100 500 1000 --iterations 3
+```
+
+### From Multi-Turn Test
+
+```bash
+python multi_turn_test.py --turns 5 --input-tokens 100 --output-tokens 30 --output results.json
+```
+
 ## Future Work
 
-1. Implement PPD (Prefill-Prefill-Decode) decision logic
-2. Add multi-turn dialogue KV cache transfer optimization
-3. Extend P2pNcclConnector with detailed transfer metrics
-4. Test performance across different prompt lengths and cache rates
+1. **PPD Routing Logic:** Implement intelligent routing decisions based on:
+   - Cache hit rate on D
+   - New prompt length
+   - Network bandwidth vs. compute trade-off
+
+2. **Selective KV Transfer:** Modify P2pNcclConnector to transfer only new KV blocks
+
+3. **Real-time Metrics:** Add transfer timing instrumentation inside P2pNcclConnector
+
+4. **Multi-D Scaling:** Test with multiple decode instances for load balancing
