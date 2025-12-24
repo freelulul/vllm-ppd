@@ -1,0 +1,61 @@
+{
+  "config": {
+    "num_turns": 5,
+    "input_tokens_per_turn": 100,
+    "output_tokens_per_turn": 30,
+    "format": "completion"
+  },
+  "totals": {
+    "total_input_tokens": 439,
+    "total_output_tokens": 60,
+    "total_kv_transfer_mb": 54.875,
+    "total_latency_ms": 780.4853431880474
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "input_tokens": 91,
+      "output_tokens": 11,
+      "cumulative_tokens": 91,
+      "kv_cache_size_mb": 11.375,
+      "cumulative_kv_mb": 11.375,
+      "latency_ms": 146.49415016174316
+    },
+    {
+      "turn": 2,
+      "input_tokens": 87,
+      "output_tokens": 11,
+      "cumulative_tokens": 189,
+      "kv_cache_size_mb": 10.875,
+      "cumulative_kv_mb": 23.625,
+      "latency_ms": 157.09500759840012
+    },
+    {
+      "turn": 3,
+      "input_tokens": 88,
+      "output_tokens": 13,
+      "cumulative_tokens": 288,
+      "kv_cache_size_mb": 11.0,
+      "cumulative_kv_mb": 36.0,
+      "latency_ms": 162.65837848186493
+    },
+    {
+      "turn": 4,
+      "input_tokens": 86,
+      "output_tokens": 11,
+      "cumulative_tokens": 387,
+      "kv_cache_size_mb": 10.75,
+      "cumulative_kv_mb": 48.375,
+      "latency_ms": 149.60157498717308
+    },
+    {
+      "turn": 5,
+      "input_tokens": 87,
+      "output_tokens": 14,
+      "cumulative_tokens": 485,
+      "kv_cache_size_mb": 10.875,
+      "cumulative_kv_mb": 60.625,
+      "latency_ms": 164.63623195886612
+    }
+  ]
+}
