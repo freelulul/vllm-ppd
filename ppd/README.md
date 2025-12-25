@@ -135,14 +135,6 @@ conda activate vllm-ppd
 
 The script automatically cleans old logs and keeps only the latest run.
 
-### Run Bandwidth Test
-
-After the PD separation test is running:
-
-```bash
-python src/bandwidth_test.py --prompt-lengths 100 500 1000 --iterations 3
-```
-
 ## KV Cache Transfer Bandwidth
 
 ### KV Cache Size Calculation (Llama-3.1-8B)
@@ -164,10 +156,6 @@ For 1000 tokens: 128 KB * 1000 = 128 MB
 | 100GbE Network | 12.5 GB/s | ~10 GB/s |
 | 25GbE Network | 3.1 GB/s | ~2.5 GB/s |
 | 10GbE Network | 1.25 GB/s | ~1.0 GB/s |
-
-### Bandwidth Verification
-
-The `bandwidth_test.py` script measures apparent bandwidth and compares with hardware limits to verify TCP transfer is working correctly.
 
 ## Native Metrics Interfaces
 
@@ -196,20 +184,29 @@ Available in `vllm/distributed/kv_transfer/kv_connector/v1/nixl_connector.py`:
 | `bytes_transferred` | Bytes transferred |
 | `num_descriptors` | Number of transfer descriptors |
 
-**Note**: P2pNcclConnector does not have built-in detailed transfer metrics. Use `bandwidth_test.py` to measure transfer performance.
+**Note**: P2pNcclConnector does not have built-in detailed transfer metrics. Use the comprehensive benchmark to measure performance.
 
 ## File Structure
 
 ```
 ppd/
 ├── README.md                    # This documentation
-├── run_pd_separation_test.sh    # Main test script (auto-cleans old logs)
-├── bandwidth_test.py            # Bandwidth measurement and verification
-├── test_client.py               # Python test client
-└── logs/                        # Log directory (latest run only)
-    ├── prefill_*.log           # Prefill instance log
-    ├── decode_*.log            # Decode instance log
-    └── proxy_*.log             # Proxy server log
+├── scripts/                     # Shell scripts
+│   ├── start_servers.sh         # Quick start (supports --benchmark flag)
+│   ├── stop_servers.sh          # Stop all servers
+│   └── run_pd_separation_test.sh # PD test script
+├── src/                         # Python source code
+│   ├── disagg_proxy_ppd.py      # PPD-aware proxy server
+│   ├── disagg_proxy_benchmark.py # Benchmark proxy with metrics
+│   ├── comprehensive_benchmark.py # Comprehensive benchmark suite (24 configs)
+│   ├── test_cache_hypothesis.py # PPD KV cache verification test
+│   └── analyze_benchmark.py     # Benchmark result analysis
+├── results/                     # Test results
+│   └── benchmark_*.json         # Benchmark results
+└── logs/                        # Log files
+    ├── prefill.log              # Prefill instance log
+    ├── decode.log               # Decode instance log
+    └── proxy.log                # Proxy server log
 ```
 
 ## Available Connector Types
@@ -287,28 +284,18 @@ vLLM has built-in prefix caching that helps D reuse KV cache:
 
 **Key Insight:** D machine IS reusing KV cache locally across turns (64.4% hit rate)!
 
-### Running Multi-Turn Test
+### Running Cache Verification Test
 
 ```bash
-# Start PD servers first
-./scripts/run_pd_separation_test.sh &
+# Start PPD servers
+./scripts/start_servers.sh ppd --benchmark
 
-# Wait for initialization, then run multi-turn test
-python src/multi_turn_test.py --turns 5 --input-tokens 100 --output-tokens 30
+# Run cache verification test
+python src/test_cache_hypothesis.py
 
 # Check cache hit rates in decode logs
-grep "prefix cache" logs/decode_*.log
+grep "prefix cache" logs/decode.log
 ```
-
-### Multi-Turn Test Parameters
-
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `--turns` | Number of conversation turns | 5 |
-| `--input-tokens` | Approximate input tokens per turn | 100 |
-| `--output-tokens` | Output tokens per turn | 50 |
-| `--format` | API format (chat/completion) | completion |
-| `--output` | JSON file for results | None |
 
 ### Performance Characteristics
 
@@ -336,56 +323,27 @@ For a 10-turn conversation with 100 tokens each:
 
 This is where the PPD routing decision becomes critical.
 
-## File Structure
-
-```
-ppd/
-├── README.md                        # This documentation
-├── .gitignore                       # Git ignore rules (excludes logs/ and results/)
-├── scripts/                         # Shell scripts
-│   ├── start_servers.sh             # Quick start (supports --benchmark flag)
-│   ├── stop_servers.sh              # Stop all servers
-│   ├── run_pd_separation_test.sh    # Original PD test script
-│   └── run_ppd_test.sh              # PPD test script
-├── src/                             # Python source code
-│   ├── disagg_proxy_ppd.py          # PPD-aware proxy server
-│   ├── disagg_proxy_benchmark.py    # Benchmark proxy with metrics
-│   ├── comprehensive_benchmark.py   # Comprehensive benchmark suite
-│   ├── compare_pd_ppd.py            # Simple PD vs PPD comparison
-│   ├── bandwidth_test.py            # Bandwidth measurement
-│   ├── multi_turn_test.py           # Multi-turn dialogue test
-│   └── test_client.py               # Basic Python test client
-├── results/                         # Test results (not tracked by git)
-│   └── benchmark_*.json             # Benchmark results
-└── logs/                            # Log files (not tracked by git)
-    ├── prefill.log                  # Prefill instance log
-    ├── decode.log                   # Decode instance log
-    └── proxy.log                    # Proxy server log
-```
-
 ## Key Metrics to Monitor
 
 ### From Decode Logs
 
 ```bash
 # Monitor cache hit rates
-grep "prefix cache" logs/decode_*.log
+grep "prefix cache" logs/decode.log
 
 # Example output:
 # Prefix cache hit rate: 64.4%        ← Local D cache reuse
 # External prefix cache hit rate: 35.0% ← From P→D transfer
 ```
 
-### From Bandwidth Test
+### From Benchmark
 
 ```bash
-python src/bandwidth_test.py --prompt-lengths 100 500 1000 --iterations 3
-```
+# Run comprehensive benchmark
+python src/comprehensive_benchmark.py --runs 5 --warmup 1
 
-### From Multi-Turn Test
-
-```bash
-python src/multi_turn_test.py --turns 5 --input-tokens 100 --output-tokens 30
+# Analyze benchmark results
+python src/analyze_benchmark.py results/benchmark_*.json
 ```
 
 ## PPD Mode (Implemented)
@@ -427,10 +385,10 @@ PPD Mode:
 cd /net/projects2/ds3lab/zongzel/vllm/ppd
 
 # Start with PPD mode
-./scripts/run_ppd_test.sh ppd
+./scripts/start_servers.sh ppd --benchmark
 
-# Run comparison test (tests both PD and PPD modes)
-python src/compare_pd_ppd.py --turns 5 --output-tokens 30
+# Run benchmark
+python src/comprehensive_benchmark.py --runs 5 --warmup 1
 
 # Switch modes dynamically
 curl -X POST http://localhost:10001/mode/pd   # Switch to PD mode
@@ -486,23 +444,35 @@ With PPD mode enabled:
 # Start servers with benchmark proxy
 ./scripts/start_servers.sh ppd --benchmark
 
-# Run quick benchmark (3 configs)
-python src/comprehensive_benchmark.py --quick
+# List all 24 configurations
+python src/comprehensive_benchmark.py --list
 
-# Run full benchmark (20+ configs)
+# Run all 24 configurations (single run)
 python src/comprehensive_benchmark.py
+
+# Run with multiple runs for statistical significance
+python src/comprehensive_benchmark.py --runs 5 --warmup 1
+
+# Run specific config only
+python src/comprehensive_benchmark.py --config-name '01_Baseline_Short_Chat' --runs 5 --warmup 1
 
 # Results saved to results/benchmark_YYYYMMDD_HHMMSS.json
 ```
 
 ### Benchmark Configurations
 
-The comprehensive benchmark tests:
+The comprehensive benchmark includes 24 configurations across categories:
 
-1. **Turn Variations** (1-20 turns with fixed tokens)
-2. **Input Token Variations** (20-500 tokens with fixed turns)
-3. **Output Token Variations** (10-200 tokens with fixed turns)
-4. **Mixed Configurations** (various combinations)
+1. **Baseline** - Standard chat scenarios (configs 01-02)
+2. **Deep Sessions** - Many-turn conversations (configs 03-05)
+3. **Long Context** - Single-turn long inputs (configs 06-09)
+4. **RAG/Hybrid** - Document + follow-up turns (config 10)
+5. **Scenarios** - Code completion, generation, creative writing (configs 11-13)
+6. **Stress Tests** - High frequency, heavy input (configs 14-15)
+7. **Balanced Workloads** - Real-world patterns (configs 16-17)
+8. **Edge Cases** - Boundary conditions (configs 18-19)
+9. **Crossover Probes** - Breakeven point search (configs 20-21)
+10. **Mixed Extreme** - Stress tests (configs 22-24)
 
 ### Metrics Collected
 

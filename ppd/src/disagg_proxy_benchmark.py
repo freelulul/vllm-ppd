@@ -143,19 +143,44 @@ def start_service_discovery(hostname, port):
 
 
 def get_conversation_hash(data: dict) -> str:
+    """
+    Generate a hash to identify a conversation.
+
+    For chat format: Hash the first user message (conversation starter)
+    For completion format: Hash the first "User: xxx" segment (first turn)
+
+    The key insight: we want to identify the SAME conversation across turns,
+    so we hash the first user message which is constant across all turns.
+    """
     if "messages" in data:
+        # Chat format - hash the first user message
         messages = data.get("messages", [])
-        if len(messages) > 1:
-            history = messages[:-1]
-            history_str = str(history)
+        first_user = next((m for m in messages if m.get("role") == "user"), None)
+        if first_user:
+            history_str = first_user.get("content", "")
         else:
             history_str = ""
     else:
+        # Completion format - extract first "User: xxx" segment
         prompt = data.get("prompt", "")
         if isinstance(prompt, list):
             prompt = " ".join(str(p) for p in prompt)
-        prefix_len = int(len(prompt) * 0.8)
-        history_str = prompt[:prefix_len]
+
+        # Find the first user turn: "User: xxx\nAssistant:"
+        # This stays constant across all turns of the same conversation
+        if "User:" in prompt:
+            # Get content from first "User:" to first "Assistant:"
+            start = prompt.find("User:")
+            end = prompt.find("Assistant:", start)
+            if end > start:
+                history_str = prompt[start:end].strip()
+            else:
+                # No Assistant yet, use everything after User:
+                history_str = prompt[start:start+200]  # Limit to 200 chars
+        else:
+            # Fallback: use first 200 chars
+            history_str = prompt[:200]
+
     return hashlib.md5(history_str.encode()).hexdigest()
 
 

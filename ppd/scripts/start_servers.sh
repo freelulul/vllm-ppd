@@ -6,6 +6,32 @@
 
 set -e
 
+# Environment checks - verify we're using the right Python
+PYTHON_PATH=$(which python)
+if [[ "$PYTHON_PATH" != *"vllm-ppd"* ]]; then
+    echo "ERROR: Please activate vllm-ppd first:"
+    echo "  conda activate vllm-ppd"
+    echo "  Current python: $PYTHON_PATH"
+    exit 1
+fi
+
+# Check for conflicting vllm installation
+if [ -f "$HOME/.local/bin/vllm" ] && head -1 "$HOME/.local/bin/vllm" 2>/dev/null | grep -q "/opt/conda/bin/python"; then
+    echo "ERROR: Found conflicting ~/.local/bin/vllm using base Python"
+    echo "  This will cause --kv-transfer-config to fail"
+    echo "  Fix: rm ~/.local/bin/vllm"
+    echo "  Or run: ./scripts/fix_env.sh"
+    exit 1
+fi
+
+# Check quart
+if ! python -c "import quart" 2>/dev/null; then
+    echo "ERROR: quart not installed"
+    echo "  Fix: pip install quart"
+    echo "  Or run: ./scripts/fix_env.sh"
+    exit 1
+fi
+
 MODE="${1:-ppd}"
 BENCHMARK_MODE=false
 
@@ -130,8 +156,9 @@ if [ "$BENCHMARK_MODE" = true ]; then
     echo "  POST /metrics/clear   - Clear metrics"
     echo ""
     echo "Run benchmark:"
-    echo "  python src/comprehensive_benchmark.py --quick"
-    echo "  python src/comprehensive_benchmark.py  # Full benchmark"
+    echo "  python src/comprehensive_benchmark.py --list                   # List all 24 configs"
+    echo "  python src/comprehensive_benchmark.py                          # Run all configs"
+    echo "  python src/comprehensive_benchmark.py --runs 5 --warmup 1      # Multi-run mode"
 fi
 echo ""
 echo "To stop: ./scripts/stop_servers.sh"

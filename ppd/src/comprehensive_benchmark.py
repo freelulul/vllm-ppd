@@ -3,17 +3,17 @@
 Comprehensive PD vs PPD Benchmark Suite
 
 This script performs detailed comparison between PD and PPD modes with:
-- Various conversation turn counts (1-20)
+- Various conversation turn counts (1-50)
 - Various input/output token length combinations
 - Fine-grained timing breakdown (P prefill, D decode, KV transfer estimation)
 - Cache hit rate analysis from vLLM logs
 - Multi-run support with warmup for statistical significance
 
 Usage:
-    python comprehensive_benchmark.py --config benchmark_config.json
-    python comprehensive_benchmark.py --quick  # Quick test with minimal configs
-    python comprehensive_benchmark.py --extended  # Extended test with large tokens
-    python comprehensive_benchmark.py --runs 3 --warmup 1  # 3 runs with 1 warmup
+    python comprehensive_benchmark.py                           # Run all 24 configs
+    python comprehensive_benchmark.py --config-name '01_...'    # Run specific config
+    python comprehensive_benchmark.py --runs 5 --warmup 1       # 5 runs with 1 warmup
+    python comprehensive_benchmark.py --list                    # List all configs
 """
 
 import argparse
@@ -100,29 +100,45 @@ class MultiRunResult:
     pd_times_ms: list[float] = field(default_factory=list)
     pd_mean_ms: float = 0.0
     pd_std_ms: float = 0.0
+    pd_trimmed_mean_ms: float = 0.0  # Trimmed mean (remove min/max)
 
     # PPD timing stats
     ppd_times_ms: list[float] = field(default_factory=list)
     ppd_mean_ms: float = 0.0
     ppd_std_ms: float = 0.0
+    ppd_trimmed_mean_ms: float = 0.0  # Trimmed mean (remove min/max)
 
     # Speedup stats
     speedup_mean: float = 0.0
     speedup_std: float = 0.0
+    speedup_trimmed: float = 0.0  # Based on trimmed means
+
+    def _trimmed_mean(self, values: list[float]) -> float:
+        """Calculate trimmed mean by removing min and max values."""
+        if len(values) <= 2:
+            return statistics.mean(values) if values else 0.0
+        sorted_vals = sorted(values)
+        trimmed = sorted_vals[1:-1]  # Remove min and max
+        return statistics.mean(trimmed) if trimmed else 0.0
 
     def calculate_stats(self):
-        """Calculate mean and std from collected times."""
+        """Calculate mean, std, and trimmed mean from collected times."""
         if self.pd_times_ms:
             self.pd_mean_ms = statistics.mean(self.pd_times_ms)
             self.pd_std_ms = statistics.stdev(self.pd_times_ms) if len(self.pd_times_ms) > 1 else 0.0
+            self.pd_trimmed_mean_ms = self._trimmed_mean(self.pd_times_ms)
         if self.ppd_times_ms:
             self.ppd_mean_ms = statistics.mean(self.ppd_times_ms)
             self.ppd_std_ms = statistics.stdev(self.ppd_times_ms) if len(self.ppd_times_ms) > 1 else 0.0
+            self.ppd_trimmed_mean_ms = self._trimmed_mean(self.ppd_times_ms)
         if self.pd_mean_ms > 0 and self.ppd_mean_ms > 0:
             speedups = [pd / ppd for pd, ppd in zip(self.pd_times_ms, self.ppd_times_ms) if ppd > 0]
             if speedups:
                 self.speedup_mean = statistics.mean(speedups)
                 self.speedup_std = statistics.stdev(speedups) if len(speedups) > 1 else 0.0
+        # Trimmed speedup
+        if self.pd_trimmed_mean_ms > 0 and self.ppd_trimmed_mean_ms > 0:
+            self.speedup_trimmed = self.pd_trimmed_mean_ms / self.ppd_trimmed_mean_ms
 
 
 @dataclass
@@ -179,8 +195,14 @@ class ComprehensiveBenchmark:
         except:
             return []
 
-    def generate_prompt(self, base_tokens: int, turn: int) -> str:
-        """Generate a prompt with approximately the specified number of tokens."""
+    def generate_prompt(self, base_tokens: int, turn: int, run_id: str = "") -> str:
+        """Generate a prompt with approximately the specified number of tokens.
+
+        Args:
+            base_tokens: Target number of tokens
+            turn: Turn number in conversation
+            run_id: Unique run identifier to prevent prefix caching across runs
+        """
         # Approximate: 1 token ≈ 4 characters
         base_text = (
             "This is a test prompt for benchmarking the vLLM disaggregated serving system. "
@@ -189,6 +211,10 @@ class ComprehensiveBenchmark:
         # Repeat to get desired length
         target_chars = base_tokens * 4
         repeated = (base_text * ((target_chars // len(base_text)) + 1))[:target_chars]
+
+        # Include run_id to make each run's prompts unique (prevents prefix caching)
+        if run_id:
+            return f"[Run:{run_id}] Turn {turn}: {repeated}"
         return f"Turn {turn}: {repeated}"
 
     def run_single_turn(
@@ -196,9 +222,14 @@ class ComprehensiveBenchmark:
         conversation_history: str,
         new_prompt: str,
         output_tokens: int,
+        force_full_output: bool = False,
     ) -> tuple[str, dict, float]:
         """
         Run a single turn and return (response_text, usage_dict, latency_ms).
+
+        Args:
+            force_full_output: If True, use min_tokens to prevent early EOS termination.
+                              Use for benchmarks where consistent output length is critical.
         """
         if conversation_history:
             full_prompt = f"{conversation_history}\nUser: {new_prompt}\nAssistant:"
@@ -208,15 +239,24 @@ class ComprehensiveBenchmark:
         start_time = time.perf_counter()
 
         try:
+            request_json = {
+                "model": self.model_path,
+                "prompt": full_prompt,
+                "max_tokens": output_tokens,
+                "temperature": 0.1,  # Low temperature improves reproducibility
+                "stop": ["\nUser:", "\n\nUser:"],
+            }
+
+            # For scenarios requiring consistent output length, remove stop tokens
+            if force_full_output:
+                # Remove stop tokens so model generates freely until max_tokens
+                del request_json["stop"]
+                # Use higher temperature to avoid repetition-caused EOS
+                request_json["temperature"] = 0.8
+
             response = requests.post(
                 f"{self.proxy_url}/v1/completions",
-                json={
-                    "model": self.model_path,
-                    "prompt": full_prompt,
-                    "max_tokens": output_tokens,
-                    "temperature": 0.7,
-                    "stop": ["\nUser:", "\n\nUser:"],
-                },
+                json=request_json,
                 timeout=600,  # Increased timeout for large outputs
             )
 
@@ -242,8 +282,15 @@ class ComprehensiveBenchmark:
         input_tokens_per_turn: int,
         output_tokens_per_turn: int,
         config_name: str = "",
+        run_id: str = "",
+        force_full_output: bool = False,
     ) -> ConversationMetrics:
-        """Run a complete multi-turn conversation."""
+        """Run a complete multi-turn conversation.
+
+        Args:
+            run_id: Unique identifier for this run to prevent prefix caching
+            force_full_output: If True, force model to generate exactly output_tokens
+        """
 
         metrics = ConversationMetrics(
             config_name=config_name,
@@ -258,12 +305,13 @@ class ComprehensiveBenchmark:
         cumulative_tokens = 0
 
         for turn in range(1, num_turns + 1):
-            # Generate prompt for this turn
-            new_prompt = self.generate_prompt(input_tokens_per_turn, turn)
+            # Generate prompt for this turn (with run_id to prevent prefix caching)
+            new_prompt = self.generate_prompt(input_tokens_per_turn, turn, run_id)
 
             # Run turn
             response_text, usage, latency_ms = self.run_single_turn(
-                conversation_history, new_prompt, output_tokens_per_turn
+                conversation_history, new_prompt, output_tokens_per_turn,
+                force_full_output=force_full_output
             )
 
             if not response_text:
@@ -296,10 +344,11 @@ class ComprehensiveBenchmark:
             metrics.total_prompt_tokens += prompt_tokens
             metrics.total_completion_tokens += completion_tokens
 
-            # Update conversation history
-            conversation_history = f"User: {new_prompt}\nAssistant:{response_text}"
-            if turn > 1:
-                conversation_history = f"{conversation_history}\n{conversation_history}"
+            # Update conversation history - accumulate properly
+            if conversation_history:
+                conversation_history = f"{conversation_history}\nUser: {new_prompt}\nAssistant:{response_text}"
+            else:
+                conversation_history = f"User: {new_prompt}\nAssistant:{response_text}"
 
         return metrics
 
@@ -342,6 +391,7 @@ class ComprehensiveBenchmark:
         num_turns = config["turns"]
         input_tokens = config["input_tokens"]
         output_tokens = config["output_tokens"]
+        force_full_output = config.get("force_full_output", False)
         config_name = config.get("name", f"t{num_turns}_i{input_tokens}_o{output_tokens}")
 
         print(f"\n--- Config: {config_name} ---")
@@ -359,6 +409,7 @@ class ComprehensiveBenchmark:
             input_tokens_per_turn=input_tokens,
             output_tokens_per_turn=output_tokens,
             config_name=config_name,
+            force_full_output=force_full_output,
         )
         pd_local, pd_external = self.parse_cache_rates_from_logs()
         pd_metrics.local_cache_hit_rate = pd_local
@@ -381,6 +432,7 @@ class ComprehensiveBenchmark:
             input_tokens_per_turn=input_tokens,
             output_tokens_per_turn=output_tokens,
             config_name=config_name,
+            force_full_output=force_full_output,
         )
         ppd_local, ppd_external = self.parse_cache_rates_from_logs()
         ppd_metrics.local_cache_hit_rate = ppd_local
@@ -397,14 +449,22 @@ class ComprehensiveBenchmark:
     def run_benchmark_config_multi(
         self,
         config: dict,
-        num_runs: int = 3,
+        num_runs: int = 5,
         warmup_runs: int = 1,
     ) -> MultiRunResult:
-        """Run a benchmark configuration multiple times and aggregate results."""
+        """Run a benchmark configuration multiple times and aggregate results.
+
+        For reliable results, uses:
+        - warmup_runs: discarded runs to warm up caches
+        - num_runs: actual measurement runs
+        - Trimmed mean: removes min/max for robustness
+        - Cache clearing and delays between runs to reduce interference
+        """
 
         num_turns = config["turns"]
         input_tokens = config["input_tokens"]
         output_tokens = config["output_tokens"]
+        force_full_output = config.get("force_full_output", False)
         config_name = config.get("name", f"t{num_turns}_i{input_tokens}_o{output_tokens}")
 
         print(f"\n--- Config: {config_name} ---")
@@ -420,15 +480,23 @@ class ComprehensiveBenchmark:
         )
 
         total_iterations = warmup_runs + num_runs
+        failed_runs = 0
 
         for i in range(total_iterations):
             is_warmup = i < warmup_runs
             run_label = f"warmup {i+1}" if is_warmup else f"run {i+1-warmup_runs}"
 
-            # Run PD mode
+            # Generate unique run_id for this iteration (prevents prefix caching)
+            run_id = f"{config_name}_{i}_{int(time.time()*1000)}"
+
+            # Aggressive cache clearing before each run
+            self._clear_all_caches()
+            time.sleep(2)  # Increased delay for cache settling
+
+            # Run PD mode with unique run_id
             self.set_mode("pd")
             self.clear_state()
-            time.sleep(0.5)
+            time.sleep(1)  # Increased delay
 
             pd_metrics = self.run_conversation(
                 mode="pd",
@@ -436,14 +504,18 @@ class ComprehensiveBenchmark:
                 input_tokens_per_turn=input_tokens,
                 output_tokens_per_turn=output_tokens,
                 config_name=config_name,
+                run_id=f"pd_{run_id}",
+                force_full_output=force_full_output,
             )
 
-            time.sleep(1)
+            # Clear between modes
+            self._clear_all_caches()
+            time.sleep(2)
 
-            # Run PPD mode
+            # Run PPD mode with unique run_id
             self.set_mode("ppd")
             self.clear_state()
-            time.sleep(0.5)
+            time.sleep(1)
 
             ppd_metrics = self.run_conversation(
                 mode="ppd",
@@ -451,7 +523,18 @@ class ComprehensiveBenchmark:
                 input_tokens_per_turn=input_tokens,
                 output_tokens_per_turn=output_tokens,
                 config_name=config_name,
+                run_id=f"ppd_{run_id}",
+                force_full_output=force_full_output,
             )
+
+            # Check for failed requests (0.0ms indicates failure)
+            pd_failed = pd_metrics.total_time_ms < 1.0
+            ppd_failed = ppd_metrics.total_time_ms < 1.0
+
+            if pd_failed or ppd_failed:
+                failed_runs += 1
+                print(f"    [{run_label}] FAILED - PD: {pd_metrics.total_time_ms:.1f}ms, PPD: {ppd_metrics.total_time_ms:.1f}ms (skipped)")
+                continue
 
             if is_warmup:
                 print(f"    [{run_label}] PD: {pd_metrics.total_time_ms:.1f}ms, PPD: {ppd_metrics.total_time_ms:.1f}ms (discarded)")
@@ -461,7 +544,11 @@ class ComprehensiveBenchmark:
                 speedup = pd_metrics.total_time_ms / ppd_metrics.total_time_ms if ppd_metrics.total_time_ms > 0 else 0
                 print(f"    [{run_label}] PD: {pd_metrics.total_time_ms:.1f}ms, PPD: {ppd_metrics.total_time_ms:.1f}ms, speedup: {speedup:.2f}x")
 
-            time.sleep(1)
+            # Delay between iterations to avoid interference
+            time.sleep(3)
+
+        if failed_runs > 0:
+            print(f"    WARNING: {failed_runs} runs failed and were skipped")
 
         # Calculate statistics
         multi_result.calculate_stats()
@@ -469,8 +556,25 @@ class ComprehensiveBenchmark:
         print(f"    => Mean: PD {multi_result.pd_mean_ms:.1f}±{multi_result.pd_std_ms:.1f}ms, "
               f"PPD {multi_result.ppd_mean_ms:.1f}±{multi_result.ppd_std_ms:.1f}ms, "
               f"speedup {multi_result.speedup_mean:.2f}±{multi_result.speedup_std:.2f}x")
+        print(f"    => Trimmed: PD {multi_result.pd_trimmed_mean_ms:.1f}ms, "
+              f"PPD {multi_result.ppd_trimmed_mean_ms:.1f}ms, "
+              f"speedup {multi_result.speedup_trimmed:.2f}x")
 
         return multi_result
+
+    def _clear_all_caches(self):
+        """Clear all caches between runs to reduce interference."""
+        # Clear proxy state
+        self.clear_state()
+
+        # Call cache clear endpoints if available
+        try:
+            requests.post(f"{self.proxy_url}/cache/clear", timeout=5)
+        except:
+            pass
+
+        # Note: Removed dummy request as it can crash the prefill server
+        # when request_id doesn't contain proper routing info
 
     def _enrich_metrics_from_proxy(
         self,
@@ -691,59 +795,81 @@ class ComprehensiveBenchmark:
     def print_report_multi(self, result: BenchmarkResult):
         """Print detailed benchmark report for multi-run results."""
         print("\n" + "=" * 70)
-        print("BENCHMARK REPORT: PD vs PPD Mode (Multi-Run)")
+        print("BENCHMARK REPORT: PD vs PPD Mode (Multi-Run with Trimmed Mean)")
         print("=" * 70)
 
-        print("\n1. PER-CONFIGURATION RESULTS (mean ± std):")
-        print("-" * 110)
-        print(f"{'Config':<25} {'Turns':<6} {'In':<5} {'Out':<5} {'PD (ms)':<18} {'PPD (ms)':<18} {'Speedup':<14} {'Winner':<6}")
-        print("-" * 110)
+        print("\n1. PER-CONFIGURATION RESULTS:")
+        print("-" * 130)
+        print(f"{'Config':<25} {'Turns':<6} {'In':<5} {'Out':<5} {'PD mean±std':<16} {'PD trim':<10} {'PPD mean±std':<16} {'PPD trim':<10} {'Speedup':<10} {'Winner':<6}")
+        print("-" * 130)
 
         pd_advantage = []
         ppd_advantage = []
 
         for mr in result.multi_run_results:
-            winner = "PPD" if mr.speedup_mean > 1.0 else "PD"
+            # Use trimmed speedup for winner determination (more reliable)
+            winner = "PPD" if mr.speedup_trimmed > 1.0 else "PD"
             pd_str = f"{mr.pd_mean_ms:.1f}±{mr.pd_std_ms:.1f}"
             ppd_str = f"{mr.ppd_mean_ms:.1f}±{mr.ppd_std_ms:.1f}"
-            speedup_str = f"{mr.speedup_mean:.2f}±{mr.speedup_std:.2f}x"
+            pd_trim = f"{mr.pd_trimmed_mean_ms:.1f}"
+            ppd_trim = f"{mr.ppd_trimmed_mean_ms:.1f}"
+            speedup_str = f"{mr.speedup_trimmed:.2f}x"
 
             print(f"{mr.config_name:<25} {mr.num_turns:<6} {mr.input_tokens:<5} {mr.output_tokens:<5} "
-                  f"{pd_str:<18} {ppd_str:<18} {speedup_str:<14} {winner:<6}")
+                  f"{pd_str:<16} {pd_trim:<10} {ppd_str:<16} {ppd_trim:<10} {speedup_str:<10} {winner:<6}")
 
-            if mr.speedup_mean < 1.0:
+            if mr.speedup_trimmed < 1.0:
                 pd_advantage.append(mr)
-            elif mr.speedup_mean > 1.1:
+            elif mr.speedup_trimmed > 1.1:
                 ppd_advantage.append(mr)
 
-        print("-" * 110)
+        print("-" * 130)
 
-        # Overall summary
-        total_pd = sum(mr.pd_mean_ms for mr in result.multi_run_results)
-        total_ppd = sum(mr.ppd_mean_ms for mr in result.multi_run_results)
-        overall_speedup = total_pd / total_ppd if total_ppd > 0 else 0
+        # Overall summary using trimmed means
+        total_pd_trimmed = sum(mr.pd_trimmed_mean_ms for mr in result.multi_run_results)
+        total_ppd_trimmed = sum(mr.ppd_trimmed_mean_ms for mr in result.multi_run_results)
+        overall_speedup_trimmed = total_pd_trimmed / total_ppd_trimmed if total_ppd_trimmed > 0 else 0
 
-        print(f"\n2. OVERALL SUMMARY:")
+        print(f"\n2. OVERALL SUMMARY (using trimmed means):")
         print("-" * 70)
-        print(f"  Total PD Time (mean):   {total_pd:.1f} ms")
-        print(f"  Total PPD Time (mean):  {total_ppd:.1f} ms")
-        print(f"  Overall Speedup:        {overall_speedup:.2f}x")
-        print(f"  PD Wins:                {sum(1 for mr in result.multi_run_results if mr.speedup_mean < 1.0)} configs")
-        print(f"  PPD Wins:               {sum(1 for mr in result.multi_run_results if mr.speedup_mean >= 1.0)} configs")
+        print(f"  Total PD Time (trimmed):   {total_pd_trimmed:.1f} ms")
+        print(f"  Total PPD Time (trimmed):  {total_ppd_trimmed:.1f} ms")
+        print(f"  Overall Speedup:           {overall_speedup_trimmed:.2f}x")
+        print(f"  PD Wins:                   {sum(1 for mr in result.multi_run_results if mr.speedup_trimmed < 1.0)} configs")
+        print(f"  PPD Wins:                  {sum(1 for mr in result.multi_run_results if mr.speedup_trimmed >= 1.0)} configs")
+
+        # Variance analysis
+        high_variance = [mr for mr in result.multi_run_results
+                         if mr.pd_std_ms > mr.pd_mean_ms * 0.2 or mr.ppd_std_ms > mr.ppd_mean_ms * 0.2]
+        if high_variance:
+            print(f"\n3. HIGH VARIANCE CONFIGS (std > 20% of mean):")
+            print("-" * 70)
+            for mr in high_variance:
+                pd_cv = (mr.pd_std_ms / mr.pd_mean_ms * 100) if mr.pd_mean_ms > 0 else 0
+                ppd_cv = (mr.ppd_std_ms / mr.ppd_mean_ms * 100) if mr.ppd_mean_ms > 0 else 0
+                print(f"  {mr.config_name}: PD CV={pd_cv:.1f}%, PPD CV={ppd_cv:.1f}%")
+                print(f"    PD runs: {[f'{t:.0f}' for t in mr.pd_times_ms]}")
+                print(f"    PPD runs: {[f'{t:.0f}' for t in mr.ppd_times_ms]}")
 
         # PD advantage cases
-        print(f"\n3. PD ADVANTAGE CASES (speedup < 1.0):")
+        print(f"\n4. PD ADVANTAGE CASES (trimmed speedup < 1.0):")
         print("-" * 70)
-        for mr in sorted(pd_advantage, key=lambda x: x.speedup_mean):
-            print(f"  {mr.config_name}: {mr.speedup_mean:.2f}±{mr.speedup_std:.2f}x "
-                  f"(turns={mr.num_turns}, in={mr.input_tokens}, out={mr.output_tokens})")
+        if pd_advantage:
+            for mr in sorted(pd_advantage, key=lambda x: x.speedup_trimmed):
+                print(f"  {mr.config_name}: {mr.speedup_trimmed:.2f}x "
+                      f"(turns={mr.num_turns}, in={mr.input_tokens}, out={mr.output_tokens})")
+        else:
+            print("  None")
 
         # PPD strong advantage cases
-        print(f"\n4. PPD STRONG ADVANTAGE CASES (speedup > 1.1x):")
+        print(f"\n5. PPD STRONG ADVANTAGE CASES (trimmed speedup > 1.1x):")
         print("-" * 70)
-        for mr in sorted(ppd_advantage, key=lambda x: -x.speedup_mean):
-            print(f"  {mr.config_name}: {mr.speedup_mean:.2f}±{mr.speedup_std:.2f}x "
-                  f"(turns={mr.num_turns}, in={mr.input_tokens}, out={mr.output_tokens})")
+        if ppd_advantage:
+            for mr in sorted(ppd_advantage, key=lambda x: -x.speedup_trimmed):
+                print(f"  {mr.config_name}: {mr.speedup_trimmed:.2f}x "
+                      f"(turns={mr.num_turns}, in={mr.input_tokens}, out={mr.output_tokens})")
+        else:
+            print("  None")
 
         print("\n" + "=" * 70)
 
@@ -821,6 +947,7 @@ class ComprehensiveBenchmark:
             "config": result.config,
             "pd_results": [asdict(r) for r in result.pd_results],
             "ppd_results": [asdict(r) for r in result.ppd_results],
+            "multi_run_results": [asdict(r) for r in result.multi_run_results],
             "comparison": result.comparison,
         }
 
@@ -831,134 +958,208 @@ class ComprehensiveBenchmark:
         return output_file
 
 
-def get_default_configs() -> list[dict]:
-    """Get default benchmark configurations."""
-    configs = []
+def get_custom_configs() -> list[dict]:
+    """
+    Comprehensive benchmark configurations designed to test PD vs PPD modes.
 
-    # Vary turns (1-20) with fixed tokens
-    for turns in [1, 2, 3, 5, 10, 15, 20]:
-        configs.append({
-            "name": f"turns_{turns}",
-            "turns": turns,
-            "input_tokens": 50,
-            "output_tokens": 30,
-        })
-
-    # Vary input tokens with fixed turns
-    for input_tokens in [20, 50, 100, 200, 500]:
-        configs.append({
-            "name": f"input_{input_tokens}",
-            "turns": 5,
-            "input_tokens": input_tokens,
-            "output_tokens": 30,
-        })
-
-    # Vary output tokens with fixed turns
-    for output_tokens in [10, 30, 50, 100, 200]:
-        configs.append({
-            "name": f"output_{output_tokens}",
-            "turns": 5,
-            "input_tokens": 50,
-            "output_tokens": output_tokens,
-        })
-
-    # Mixed configurations
-    mixed_configs = [
-        {"turns": 3, "input_tokens": 100, "output_tokens": 50},
-        {"turns": 5, "input_tokens": 200, "output_tokens": 100},
-        {"turns": 10, "input_tokens": 100, "output_tokens": 30},
-        {"turns": 10, "input_tokens": 50, "output_tokens": 100},
-        {"turns": 20, "input_tokens": 50, "output_tokens": 20},
-    ]
-    for i, cfg in enumerate(mixed_configs):
-        cfg["name"] = f"mixed_{i+1}"
-        configs.append(cfg)
-
-    return configs
-
-
-def get_extended_configs() -> list[dict]:
-    """Get extended benchmark configurations with larger tokens."""
-    configs = []
-
-    # Turn variations with larger tokens
-    for turns in [1, 2, 3, 5, 10, 15, 20]:
-        configs.append({
-            "name": f"turns_{turns}_large",
-            "turns": turns,
-            "input_tokens": 200,
-            "output_tokens": 100,
-        })
-
-    # Large input tokens (simulate long context)
-    for input_tokens in [100, 200, 500, 800, 1000]:
-        configs.append({
-            "name": f"input_{input_tokens}_5t",
-            "turns": 5,
-            "input_tokens": input_tokens,
-            "output_tokens": 50,
-        })
-
-    # Large output tokens (simulate verbose responses)
-    for output_tokens in [50, 100, 200, 300, 500]:
-        configs.append({
-            "name": f"output_{output_tokens}_5t",
-            "turns": 5,
-            "input_tokens": 100,
-            "output_tokens": output_tokens,
-        })
-
-    # Single turn with very large tokens (PD should win here)
-    for input_tokens in [200, 500, 1000]:
-        configs.append({
-            "name": f"single_large_in{input_tokens}",
-            "turns": 1,
-            "input_tokens": input_tokens,
-            "output_tokens": 100,
-        })
-
-    # Few turns with large context (PD might win)
-    for input_tokens in [300, 500, 800]:
-        configs.append({
-            "name": f"few_turns_large_{input_tokens}",
-            "turns": 2,
-            "input_tokens": input_tokens,
-            "output_tokens": 100,
-        })
-
-    # Many turns with small tokens (PPD should win)
-    for turns in [5, 10, 15, 20]:
-        configs.append({
-            "name": f"many_turns_{turns}_small",
-            "turns": turns,
-            "input_tokens": 30,
-            "output_tokens": 20,
-        })
-
-    # Extreme cases
-    extreme_configs = [
-        # Very long single turn
-        {"name": "single_very_long", "turns": 1, "input_tokens": 1000, "output_tokens": 200},
-        # Many short turns
-        {"name": "many_very_short", "turns": 20, "input_tokens": 20, "output_tokens": 10},
-        # Balanced medium
-        {"name": "balanced_medium", "turns": 10, "input_tokens": 100, "output_tokens": 50},
-        # Long output short input
-        {"name": "long_output", "turns": 5, "input_tokens": 50, "output_tokens": 300},
-        # Short output long input
-        {"name": "long_input", "turns": 5, "input_tokens": 500, "output_tokens": 30},
-    ]
-    configs.extend(extreme_configs)
-
-    return configs
-
-
-def get_quick_configs() -> list[dict]:
-    """Get quick test configurations."""
+    Categories:
+    - [Baseline]: Standard chat scenarios
+    - [Deep]: Many-turn conversations where PPD should excel
+    - [LongContext]: Single-turn long inputs where PD may win
+    - [Scenario]: Real-world use cases (code, creative writing)
+    - [Stress]: Edge cases and system overhead tests
+    - [Balanced]: Balanced real-world patterns
+    - [Edge]: Boundary conditions
+    - [Probe]: Crossover point exploration
+    """
     return [
-        {"name": "quick_1", "turns": 2, "input_tokens": 30, "output_tokens": 20},
-        {"name": "quick_2", "turns": 5, "input_tokens": 50, "output_tokens": 30},
-        {"name": "quick_3", "turns": 3, "input_tokens": 100, "output_tokens": 50},
+        # === Baseline ===
+        {
+            "name": "01_Baseline_Short_Chat",
+            "description": "[Baseline] Standard short chat, PPD should have slight advantage",
+            "turns": 5,
+            "input_tokens": 50,
+            "output_tokens": 50
+        },
+        {
+            "name": "02_Baseline_Medium_Chat",
+            "description": "[Baseline] Medium length chat, simulates typical assistant interaction",
+            "turns": 10,
+            "input_tokens": 100,
+            "output_tokens": 100
+        },
+
+        # === Deep Sessions ===
+        {
+            "name": "03_Deep_Session_20T",
+            "description": "[Deep] 20-turn conversation, history accumulates ~3K tokens",
+            "turns": 20,
+            "input_tokens": 50,
+            "output_tokens": 100
+        },
+        {
+            "name": "04_Deep_Session_30T",
+            "description": "[Deep] 30-turn conversation, history ~4.5K tokens, KV transfer pressure increases",
+            "turns": 30,
+            "input_tokens": 50,
+            "output_tokens": 100
+        },
+        {
+            "name": "05_Deep_Session_Extreme_50T",
+            "description": "[Deep-Extreme] 50-turn conversation, PPD's dominant region, PD transfer slows significantly",
+            "turns": 50,
+            "input_tokens": 20,
+            "output_tokens": 20
+        },
+
+        # === Long Context ===
+        {
+            "name": "06_Context_1K_Summarization",
+            "description": "[LongContext] 1K input, simulates short news summarization",
+            "turns": 1,
+            "input_tokens": 1024,
+            "output_tokens": 200
+        },
+        {
+            "name": "07_Context_2K_Analysis",
+            "description": "[LongContext] 2K input, simulates long article analysis",
+            "turns": 1,
+            "input_tokens": 2048,
+            "output_tokens": 300
+        },
+        {
+            "name": "08_Context_4K_RAG_Single",
+            "description": "[LongContext] 4K input, single-turn RAG, tests ~500MB KV transfer vs compute",
+            "turns": 1,
+            "input_tokens": 4096,
+            "output_tokens": 256
+        },
+        {
+            "name": "09_Context_8K_Paper_Reading",
+            "description": "[LongContext-Extreme] 8K input, ~1GB KV data, key crossover point: PD transfer vs PPD compute",
+            "turns": 1,
+            "input_tokens": 8192,
+            "output_tokens": 256
+        },
+
+        # === RAG/Hybrid Scenarios ===
+        {
+            "name": "10_RAG_Conversation_Start",
+            "description": "[RAG-Hybrid] 1K doc first turn, 5 follow-up turns. Tests cache retention (adjusted to avoid 8K overflow)",
+            "turns": 6,
+            "input_tokens": 1024,  # Reduced to avoid exceeding max_model_len=8192
+            "output_tokens": 100
+        },
+
+        # === Scenarios ===
+        {
+            "name": "11_Code_Completion_Copilot",
+            "description": "[Scenario] Very short input (completion), long history (code context). PPD fast zone",
+            "turns": 10,
+            "input_tokens": 20,
+            "output_tokens": 50
+        },
+        {
+            "name": "12_Code_Generation_Function",
+            "description": "[Scenario] Medium input, long output (writing functions). Decode-dominated",
+            "turns": 3,
+            "input_tokens": 200,
+            "output_tokens": 512
+        },
+        {
+            "name": "13_Creative_Writing_Novel",
+            "description": "[Scenario] Short input, long output. Prefill strategy impact diluted",
+            "turns": 2,
+            "input_tokens": 50,
+            "output_tokens": 1024
+        },
+
+        # === Stress Tests ===
+        {
+            "name": "14_High_Frequency_Ping",
+            "description": "[Stress] Minimal KV, tests scheduling overhead rather than bandwidth",
+            "turns": 20,
+            "input_tokens": 10,
+            "output_tokens": 10
+        },
+        {
+            "name": "15_Heavy_Input_Multi_Turn",
+            "description": "[Stress] Long input each turn (e.g., analyzing multiple files), PD may overtake PPD",
+            "turns": 5,
+            "input_tokens": 1024,
+            "output_tokens": 50
+        },
+
+        # === Balanced Workloads ===
+        {
+            "name": "16_Balanced_Workload_A",
+            "description": "[Balanced] Simulates real user: gradually lengthening conversation",
+            "turns": 8,
+            "input_tokens": 150,
+            "output_tokens": 150
+        },
+        {
+            "name": "17_Balanced_Workload_B",
+            "description": "[Balanced] Simulates real user: long input, short output",
+            "turns": 5,
+            "input_tokens": 500,
+            "output_tokens": 50
+        },
+
+        # === Edge Cases ===
+        {
+            "name": "18_Edge_Tiny_History_Huge_Input",
+            "description": "[Edge] Almost no history, all new input. PD pure compute advantage zone",
+            "turns": 2,
+            "input_tokens": 3000,
+            "output_tokens": 50
+        },
+        {
+            "name": "19_Edge_Huge_History_Tiny_Input",
+            "description": "[Edge] 4K history, 10 token input. PPD pure transfer advantage zone",
+            "turns": 15,
+            "input_tokens": 10,
+            "output_tokens": 10
+        },
+
+        # === Crossover Point Probes ===
+        {
+            "name": "20_Crossover_Point_Search_A",
+            "description": "[Probe] Searching breakeven point: medium length",
+            "turns": 1,
+            "input_tokens": 1500,
+            "output_tokens": 100
+        },
+        {
+            "name": "21_Crossover_Point_Search_B",
+            "description": "[Probe] Searching breakeven point: slightly longer",
+            "turns": 1,
+            "input_tokens": 2500,
+            "output_tokens": 100
+        },
+
+        # === Mixed Extreme ===
+        {
+            "name": "22_Mixed_Long_In_Long_Out",
+            "description": "[Mixed] High input and output, GPU memory pressure test",
+            "turns": 3,
+            "input_tokens": 1024,
+            "output_tokens": 512
+        },
+        {
+            "name": "23_Burst_Sequence",
+            "description": "[Mixed] Simulates burst pattern: short-short-long-short-short",
+            "turns": 5,
+            "input_tokens": 500,
+            "output_tokens": 100
+        },
+        {
+            "name": "24_Memory_Capacity_Test",
+            "description": "[Extreme] Near max_model_len=8192 configuration",
+            "turns": 2,
+            "input_tokens": 4000,
+            "output_tokens": 200
+        },
     ]
 
 
@@ -967,14 +1168,25 @@ def main():
     parser.add_argument("--proxy-url", default="http://localhost:10001")
     parser.add_argument("--model-path",
                         default="/net/projects2/ds3lab/zongzel/models--meta-llama--Llama-3.1-8B")
-    parser.add_argument("--config", type=str, help="JSON config file")
-    parser.add_argument("--quick", action="store_true", help="Run quick test")
-    parser.add_argument("--extended", action="store_true", help="Run extended test with larger tokens")
+    parser.add_argument("--config", type=str, help="JSON config file with custom configurations")
     parser.add_argument("--output", type=str, help="Output file path")
     parser.add_argument("--runs", type=int, default=1, help="Number of runs per config (default: 1)")
     parser.add_argument("--warmup", type=int, default=0, help="Number of warmup runs (default: 0)")
+    parser.add_argument("--config-name", type=str, help="Run only a specific config by name (e.g., '01_Baseline_Short_Chat')")
+    parser.add_argument("--list", action="store_true", help="List all available config names")
 
     args = parser.parse_args()
+
+    # List configs if requested
+    if args.list:
+        print("Available configurations (24 comprehensive test cases):")
+        print("-" * 80)
+        for c in get_custom_configs():
+            desc = c.get("description", "")
+            print(f"  {c['name']}")
+            print(f"    {desc}")
+            print(f"    turns={c['turns']}, input={c['input_tokens']}, output={c['output_tokens']}")
+        return
 
     # Verify proxy connection
     try:
@@ -992,12 +1204,23 @@ def main():
     if args.config:
         with open(args.config, "r") as f:
             configs = json.load(f)
-    elif args.quick:
-        configs = get_quick_configs()
-    elif args.extended:
-        configs = get_extended_configs()
     else:
-        configs = get_default_configs()
+        # Default: Use the comprehensive 24 configs
+        configs = get_custom_configs()
+
+    # Filter to specific config if --config-name is provided
+    if args.config_name:
+        matching = [c for c in configs if c.get("name") == args.config_name]
+        if not matching:
+            # Try to find partial match
+            matching = [c for c in configs if args.config_name in c.get("name", "")]
+        if not matching:
+            print(f"Config '{args.config_name}' not found. Available configs:")
+            for c in configs:
+                print(f"  - {c.get('name', 'unnamed')}")
+            return
+        configs = matching
+        print(f"\nFiltered to config: {args.config_name}")
 
     print(f"\nLoaded {len(configs)} configurations")
 
