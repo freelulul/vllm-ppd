@@ -190,23 +190,34 @@ Available in `vllm/distributed/kv_transfer/kv_connector/v1/nixl_connector.py`:
 
 ```
 ppd/
-├── README.md                    # This documentation
-├── scripts/                     # Shell scripts
-│   ├── start_servers.sh         # Quick start (supports --benchmark flag)
-│   ├── stop_servers.sh          # Stop all servers
-│   └── run_pd_separation_test.sh # PD test script
-├── src/                         # Python source code
-│   ├── disagg_proxy_ppd.py      # PPD-aware proxy server
-│   ├── disagg_proxy_benchmark.py # Benchmark proxy with metrics
-│   ├── comprehensive_benchmark.py # Comprehensive benchmark suite (24 configs)
-│   ├── test_cache_hypothesis.py # PPD KV cache verification test
-│   └── analyze_benchmark.py     # Benchmark result analysis
-├── results/                     # Test results
-│   └── benchmark_*.json         # Benchmark results
-└── logs/                        # Log files
-    ├── prefill.log              # Prefill instance log
-    ├── decode.log               # Decode instance log
-    └── proxy.log                # Proxy server log
+├── README.md                       # This documentation
+├── docs/                           # Documentation and analysis
+│   ├── ANALYSIS.md                 # Comprehensive PD vs PPD analysis
+│   ├── speedup_by_scenario.png     # Speedup visualization
+│   ├── speedup_by_category.png     # Category-wise speedup
+│   ├── hol_blocking_comparison.png # HOL blocking test results
+│   ├── decision_matrix.png         # When to use PD vs PPD
+│   └── summary_stats.json          # Summary statistics
+├── scripts/                        # Shell scripts
+│   ├── start_servers.sh            # Quick start (supports --benchmark flag)
+│   ├── stop_servers.sh             # Stop all servers
+│   ├── run_pd_separation_test.sh   # PD test script
+│   └── generate_analysis.py        # Generate analysis visualizations
+├── src/                            # Python source code
+│   ├── disagg_proxy_ppd.py         # PPD-aware proxy server
+│   ├── disagg_proxy_benchmark.py   # Benchmark proxy with metrics
+│   ├── comprehensive_benchmark.py  # Comprehensive benchmark (24 configs)
+│   ├── hol_blocking_test.py        # HOL blocking test suite (5 scenarios)
+│   ├── rag_bomb_test.py            # RAG bomb interference test
+│   └── test_cache_hypothesis.py    # PPD KV cache verification test
+├── results/                        # Test results
+│   ├── benchmark_*.json            # Benchmark results
+│   ├── hol_blocking_*.json         # HOL blocking test results
+│   └── rag_bomb_*.json             # RAG bomb test results
+└── logs/                           # Log files
+    ├── prefill.log                 # Prefill instance log
+    ├── decode.log                  # Decode instance log
+    └── proxy.log                   # Proxy server log
 ```
 
 ## Available Connector Types
@@ -495,15 +506,66 @@ Benchmark comparison for multi-turn dialogues:
 | turns_10 | 10 | 3200 ms | 2400 ms | 1.33x | 80% |
 | turns_20 | 20 | 7500 ms | 4800 ms | 1.56x | 90% |
 
+## Test Suites
+
+### 1. Comprehensive Benchmark (24 scenarios)
+
+Tests single-request latency across various workload patterns:
+
+```bash
+# Run all 24 configurations
+python src/comprehensive_benchmark.py --runs 5
+
+# Run specific scenario
+python src/comprehensive_benchmark.py --config-name '14_High_Frequency_Ping'
+```
+
+**Key Finding:** PPD is 1.008x - 1.315x faster than PD for single requests.
+
+### 2. HOL Blocking Test (5 scenarios)
+
+Tests Head-of-Line blocking under concurrent load:
+
+```bash
+# Run all scenarios
+python src/hol_blocking_test.py --rounds 2
+
+# Run specific scenario
+python src/hol_blocking_test.py --scenario 04_Heavy_Load
+```
+
+**Key Finding:** PD wins 4/5 scenarios due to P/D isolation protecting ongoing requests.
+
+### 3. RAG Bomb Test
+
+Tests interference from large RAG documents:
+
+```bash
+python src/rag_bomb_test.py
+```
+
+### Analysis and Visualization
+
+```bash
+# Generate visualizations from results
+python scripts/generate_analysis.py
+```
+
+See [docs/ANALYSIS.md](docs/ANALYSIS.md) for detailed analysis.
+
+## Key Recommendations
+
+| Scenario | Recommended Mode | Rationale |
+|----------|------------------|-----------|
+| Single-user applications | **PPD** | 1.05-1.31x speedup |
+| Multi-user services (6+) | **PD** | Isolation prevents HOL blocking |
+| Deep conversations (10+ turns) | **PPD** | More KV transfer savings |
+| Bursty RAG workloads | **PD** | Prevents large prefills from blocking |
+
 ## Future Work
 
-1. **Selective KV Transfer:** Modify P2pNcclConnector to transfer only new KV blocks
+1. **Dynamic Mode Switching:** Auto-switch between PD/PPD based on current load
 
-2. **Real-time Metrics:** Add transfer timing instrumentation inside P2pNcclConnector
+2. **Selective KV Transfer:** Modify P2pNcclConnector to transfer only new KV blocks
 
 3. **Multi-D Scaling:** Test with multiple decode instances for load balancing
-
-4. **Adaptive Routing:** Dynamically choose PD vs D-direct based on:
-   - Cache hit rate on D
-   - New prompt length
-   - Network bandwidth vs. compute trade-off
