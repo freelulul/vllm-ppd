@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -29,6 +30,10 @@ if TYPE_CHECKING:
     from vllm.v1.request import Request
 
 logger = init_logger(__name__)
+
+# Module-level storage for KV transfer timing (shared between WORKER and SCHEDULER roles)
+# This is thread-safe as each request_id is unique
+_GLOBAL_KV_TRANSFER_TIMES: dict[str, dict[str, Any]] = {}
 
 
 @dataclass
@@ -204,6 +209,11 @@ class P2pNcclConnector(KVConnectorBase_V1):
             request_id = request.request_id
             ip, port = self.parse_request_id(request_id, False)
             remote_address = ip + ":" + str(port + self._rank)
+
+            # Start timing for this request's KV transfer
+            req_start_time = time.perf_counter()
+            num_layers_received = 0
+
             for layer_name in forward_context.no_compile_layers:
                 layer = forward_context.no_compile_layers[layer_name]
 
@@ -224,9 +234,26 @@ class P2pNcclConnector(KVConnectorBase_V1):
                     logger.warning("🚧kv_cache is None, %s", request.request_id)
                     continue
 
+                num_layers_received += 1
                 inject_kv_into_layer(
                     layer, kv_cache, request.block_ids, request.request_id
                 )
+
+            # Record timing for this request in global storage
+            req_elapsed_ms = (time.perf_counter() - req_start_time) * 1000
+            _GLOBAL_KV_TRANSFER_TIMES[request_id] = {
+                "kv_recv_time_ms": req_elapsed_ms,
+                "num_layers": num_layers_received,
+                "num_blocks": len(request.block_ids),
+                "num_tokens": request.num_tokens,
+            }
+            logger.debug(
+                "KV transfer timing: request=%s, recv_time=%.2fms, layers=%d, blocks=%d",
+                request_id[:50] if len(request_id) > 50 else request_id,
+                req_elapsed_ms,
+                num_layers_received,
+                len(request.block_ids),
+            )
 
     def wait_for_layer_load(self, layer_name: str) -> None:
         """Blocking until the KV for a specific layer is loaded into vLLM's
@@ -505,6 +532,11 @@ class P2pNcclConnector(KVConnectorBase_V1):
         """
 
         self.chunked_prefill.pop(request.request_id, None)
+
+        # Return KV transfer timing if available (from global storage)
+        kv_timing = _GLOBAL_KV_TRANSFER_TIMES.pop(request.request_id, None)
+        if kv_timing is not None:
+            return False, {"kv_transfer_timing": kv_timing}
 
         return False, None
 

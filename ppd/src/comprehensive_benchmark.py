@@ -43,8 +43,10 @@ class TurnMetrics:
     turn: int
     mode: str  # pd, ppd_turn1, ppd_d_direct
 
-    # Timing (ms)
+    # Timing (ms) - TTFT and TPOT are the key metrics
     total_time_ms: float = 0.0
+    ttft_ms: float = 0.0  # Time To First Token (streaming-measured)
+    tpot_ms: float = 0.0  # Time Per Output Token = (total - TTFT) / (tokens - 1)
     p_prefill_time_ms: float = 0.0  # Time on P (PD mode)
     d_time_ms: float = 0.0  # Time on D
 
@@ -56,6 +58,11 @@ class TurnMetrics:
     # KV Cache
     estimated_kv_size_mb: float = 0.0
     cumulative_kv_size_mb: float = 0.0
+
+    # KV Transfer timing (from vLLM source modification)
+    kv_recv_time_ms: float = 0.0  # D's blocking wait time for KV
+    kv_num_layers: int = 0
+    kv_num_blocks: int = 0
 
     # Response
     response_text: str = ""
@@ -223,13 +230,15 @@ class ComprehensiveBenchmark:
         new_prompt: str,
         output_tokens: int,
         force_full_output: bool = False,
-    ) -> tuple[str, dict, float]:
+    ) -> tuple[str, dict, float, float, dict]:
         """
-        Run a single turn and return (response_text, usage_dict, latency_ms).
+        Run a single turn with streaming for accurate TTFT measurement.
+
+        Returns:
+            (response_text, usage_dict, total_latency_ms, ttft_ms, kv_timing_dict)
 
         Args:
             force_full_output: If True, use min_tokens to prevent early EOS termination.
-                              Use for benchmarks where consistent output length is critical.
         """
         if conversation_history:
             full_prompt = f"{conversation_history}\nUser: {new_prompt}\nAssistant:"
@@ -237,43 +246,92 @@ class ComprehensiveBenchmark:
             full_prompt = f"User: {new_prompt}\nAssistant:"
 
         start_time = time.perf_counter()
+        ttft_ms = 0.0
+        first_token_received = False
+        response_text = ""
+        usage = {}
+        kv_timing = {}
 
         try:
             request_json = {
                 "model": self.model_path,
                 "prompt": full_prompt,
                 "max_tokens": output_tokens,
-                "temperature": 0.1,  # Low temperature improves reproducibility
+                "temperature": 0.1,
                 "stop": ["\nUser:", "\n\nUser:"],
+                "stream": True,  # Enable streaming for TTFT measurement
+                "stream_options": {"include_usage": True},  # Get usage in streaming
             }
 
-            # For scenarios requiring consistent output length, remove stop tokens
             if force_full_output:
-                # Remove stop tokens so model generates freely until max_tokens
                 del request_json["stop"]
-                # Use higher temperature to avoid repetition-caused EOS
                 request_json["temperature"] = 0.8
 
             response = requests.post(
                 f"{self.proxy_url}/v1/completions",
                 json=request_json,
-                timeout=600,  # Increased timeout for large outputs
+                timeout=600,
+                stream=True,
             )
+
+            if response.status_code != 200:
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                return "", {}, latency_ms, 0.0, {}
+
+            # Process streaming response
+            token_count = 0  # Count tokens for fallback if usage not provided
+            for line in response.iter_lines():
+                if not line:
+                    continue
+
+                line_str = line.decode("utf-8")
+                if not line_str.startswith("data: "):
+                    continue
+
+                data_str = line_str[6:]  # Remove "data: " prefix
+                if data_str == "[DONE]":
+                    break
+
+                try:
+                    chunk = json.loads(data_str)
+
+                    # Record TTFT on first token
+                    if not first_token_received and chunk.get("choices"):
+                        choice = chunk["choices"][0]
+                        if choice.get("text") or choice.get("finish_reason") is None:
+                            ttft_ms = (time.perf_counter() - start_time) * 1000
+                            first_token_received = True
+
+                    # Accumulate text and count tokens
+                    if chunk.get("choices") and chunk["choices"][0].get("text"):
+                        text_chunk = chunk["choices"][0]["text"]
+                        response_text += text_chunk
+                        token_count += 1  # Each SSE chunk is typically 1 token
+
+                    # Capture usage from last chunk (vLLM sends it in final chunk)
+                    if chunk.get("usage"):
+                        usage = chunk["usage"]
+
+                    # Capture KV transfer timing if present
+                    if chunk.get("kv_transfer_params"):
+                        kv_timing = chunk["kv_transfer_params"].get("kv_transfer_timing", {})
+
+                except json.JSONDecodeError:
+                    continue
 
             latency_ms = (time.perf_counter() - start_time) * 1000
 
-            if response.status_code != 200:
-                return "", {}, latency_ms
+            # Fallback: estimate tokens if usage not provided
+            if not usage.get("completion_tokens") and token_count > 0:
+                usage["completion_tokens"] = token_count
+                # Estimate prompt tokens based on input length (rough: 1 token ~ 4 chars)
+                usage["prompt_tokens"] = len(full_prompt) // 4
 
-            result = response.json()
-            usage = result.get("usage", {})
-            text = result["choices"][0]["text"]
-
-            return text, usage, latency_ms
+            return response_text, usage, latency_ms, ttft_ms, kv_timing
 
         except Exception as e:
             print(f"Error in turn: {e}")
-            return "", {}, 0.0
+            return "", {}, 0.0, 0.0, {}
 
     def run_conversation(
         self,
@@ -308,8 +366,8 @@ class ComprehensiveBenchmark:
             # Generate prompt for this turn (with run_id to prevent prefix caching)
             new_prompt = self.generate_prompt(input_tokens_per_turn, turn, run_id)
 
-            # Run turn
-            response_text, usage, latency_ms = self.run_single_turn(
+            # Run turn with streaming for TTFT measurement
+            response_text, usage, latency_ms, ttft_ms, kv_timing = self.run_single_turn(
                 conversation_history, new_prompt, output_tokens_per_turn,
                 force_full_output=force_full_output
             )
@@ -321,6 +379,13 @@ class ComprehensiveBenchmark:
             prompt_tokens = usage.get("prompt_tokens", 0)
             completion_tokens = usage.get("completion_tokens", 0)
 
+            # Calculate TPOT: (total_time - TTFT) / (completion_tokens - 1)
+            # TPOT is only meaningful if we have at least 2 tokens
+            tpot_ms = 0.0
+            if completion_tokens > 1 and ttft_ms > 0:
+                decode_time_ms = latency_ms - ttft_ms
+                tpot_ms = decode_time_ms / (completion_tokens - 1)
+
             # Calculate KV size
             kv_size_mb = self._calculate_kv_size(prompt_tokens)
             cumulative_tokens += prompt_tokens
@@ -331,11 +396,16 @@ class ComprehensiveBenchmark:
                     "ppd_d_direct" if mode == "ppd" else "pd"
                 ),
                 total_time_ms=latency_ms,
+                ttft_ms=ttft_ms,
+                tpot_ms=tpot_ms,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 input_tokens_this_turn=input_tokens_per_turn,
                 estimated_kv_size_mb=kv_size_mb,
                 cumulative_kv_size_mb=self._calculate_kv_size(cumulative_tokens),
+                kv_recv_time_ms=kv_timing.get("kv_recv_time_ms", 0.0),
+                kv_num_layers=kv_timing.get("num_layers", 0),
+                kv_num_blocks=kv_timing.get("num_blocks", 0),
                 response_text=response_text[:100],
             )
 
@@ -1012,34 +1082,34 @@ def get_custom_configs() -> list[dict]:
             "output_tokens": 20
         },
 
-        # === Long Context ===
+        # === Long Context (2-turn to test PD vs PPD difference) ===
         {
             "name": "06_Context_1K_Summarization",
-            "description": "[LongContext] 1K input, simulates short news summarization",
-            "turns": 1,
+            "description": "[LongContext] 1K input per turn, 2 turns. Tests D-direct vs P->D for long context",
+            "turns": 2,
             "input_tokens": 1024,
             "output_tokens": 200
         },
         {
             "name": "07_Context_2K_Analysis",
-            "description": "[LongContext] 2K input, simulates long article analysis",
-            "turns": 1,
+            "description": "[LongContext] 2K input per turn, 2 turns. D-direct saves KV transfer on Turn 2",
+            "turns": 2,
             "input_tokens": 2048,
-            "output_tokens": 300
+            "output_tokens": 200
         },
         {
-            "name": "08_Context_4K_RAG_Single",
-            "description": "[LongContext] 4K input, single-turn RAG, tests ~500MB KV transfer vs compute",
-            "turns": 1,
-            "input_tokens": 4096,
-            "output_tokens": 256
+            "name": "08_Context_3K_RAG",
+            "description": "[LongContext] 3K input per turn, 2 turns. Tests large KV reuse in PPD mode",
+            "turns": 2,
+            "input_tokens": 3000,
+            "output_tokens": 200
         },
         {
-            "name": "09_Context_8K_Paper_Reading",
-            "description": "[LongContext-Extreme] 8K input, ~1GB KV data, key crossover point: PD transfer vs PPD compute",
-            "turns": 1,
-            "input_tokens": 8192,
-            "output_tokens": 256
+            "name": "09_Context_4K_Heavy",
+            "description": "[LongContext-Heavy] 4K input first turn, smaller follow-up. Max context stress test",
+            "turns": 2,
+            "input_tokens": 2000,
+            "output_tokens": 200
         },
 
         # === RAG/Hybrid Scenarios ===
@@ -1125,15 +1195,15 @@ def get_custom_configs() -> list[dict]:
         # === Crossover Point Probes ===
         {
             "name": "20_Crossover_Point_Search_A",
-            "description": "[Probe] Searching breakeven point: medium length",
-            "turns": 1,
+            "description": "[Probe] 2-turn breakeven search: medium length, tests PPD D-direct advantage",
+            "turns": 2,
             "input_tokens": 1500,
             "output_tokens": 100
         },
         {
             "name": "21_Crossover_Point_Search_B",
-            "description": "[Probe] Searching breakeven point: slightly longer",
-            "turns": 1,
+            "description": "[Probe] 2-turn breakeven search: longer context, tests KV reuse benefit",
+            "turns": 2,
             "input_tokens": 2500,
             "output_tokens": 100
         },
