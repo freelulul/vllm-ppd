@@ -1,22 +1,70 @@
 {
   "W1_Chat_Balanced": {
-    "crossover_qps": null,
-    "max_ppd_advantage_qps": 8.0,
-    "max_ppd_advantage_pct": 13.955407533542502
+    "winners_by_qps": {
+      "0.5": "ppd",
+      "1.0": "ppd",
+      "2.0": "ppd",
+      "3.0": "ppd",
+      "4.0": "ppd",
+      "6.0": "ppd",
+      "8.0": "ppd"
+    },
+    "ppd_beats_repl_qps": 0.5,
+    "max_ppd_vs_repl_advantage_pct": 19.218283914202487,
+    "max_ppd_vs_repl_qps": 6.0,
+    "pd_beats_repl_qps": 0.5,
+    "max_pd_vs_repl_advantage_pct": 11.852874777418139,
+    "max_pd_vs_repl_qps": 4.0
   },
   "W2_RAG_ReadHeavy": {
-    "crossover_qps": 1.0,
-    "max_ppd_advantage_qps": 0.5,
-    "max_ppd_advantage_pct": 11.674100702600478
+    "winners_by_qps": {
+      "0.5": "ppd",
+      "1.0": "pd",
+      "2.0": "pd",
+      "3.0": "pd",
+      "4.0": "replication",
+      "6.0": "replication",
+      "8.0": "pd"
+    },
+    "ppd_beats_repl_qps": 0.5,
+    "max_ppd_vs_repl_advantage_pct": 21.854216492977216,
+    "max_ppd_vs_repl_qps": 0.5,
+    "pd_beats_repl_qps": 0.5,
+    "max_pd_vs_repl_advantage_pct": 17.204377323360074,
+    "max_pd_vs_repl_qps": 8.0
   },
   "W3_Agent_WriteHeavy": {
-    "crossover_qps": 1.0,
-    "max_ppd_advantage_qps": 8.0,
-    "max_ppd_advantage_pct": 13.422608720737102
+    "winners_by_qps": {
+      "0.5": "ppd",
+      "1.0": "replication",
+      "2.0": "replication",
+      "3.0": "ppd",
+      "4.0": "replication",
+      "6.0": "replication",
+      "8.0": "replication"
+    },
+    "ppd_beats_repl_qps": 0.5,
+    "max_ppd_vs_repl_advantage_pct": 4.353162502607743,
+    "max_ppd_vs_repl_qps": 3.0,
+    "pd_beats_repl_qps": null,
+    "max_pd_vs_repl_advantage_pct": 0,
+    "max_pd_vs_repl_qps": null
   },
   "W4_Limit_Context": {
-    "crossover_qps": 3.0,
-    "max_ppd_advantage_qps": 8.0,
-    "max_ppd_advantage_pct": 39.540374341957325
+    "winners_by_qps": {
+      "0.5": "ppd",
+      "1.0": "ppd",
+      "2.0": "replication",
+      "3.0": "replication",
+      "4.0": "replication",
+      "6.0": "replication",
+      "8.0": "replication"
+    },
+    "ppd_beats_repl_qps": 0.5,
+    "max_ppd_vs_repl_advantage_pct": 29.443975699835228,
+    "max_ppd_vs_repl_qps": 1.0,
+    "pd_beats_repl_qps": 0.5,
+    "max_pd_vs_repl_advantage_pct": 13.521434352154186,
+    "max_pd_vs_repl_qps": 1.0
   }
 }

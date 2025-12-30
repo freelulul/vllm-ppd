@@ -1,0 +1,30 @@
+{
+  "rag_bomb": {
+    "pd": {
+      "mode": "pd",
+      "scenario": "rag_bomb",
+      "victim_max_itl_mean": 0.17505884170532227,
+      "intruder_ttft_mean": 433.2032489279906
+    },
+    "ppd": {
+      "mode": "ppd",
+      "scenario": "rag_bomb",
+      "victim_max_itl_mean": 0.10461111863454182,
+      "intruder_ttft_mean": 340.5209295451641
+    }
+  },
+  "batch_congestion": {
+    "pd": {
+      "mode": "pd",
+      "scenario": "batch_congestion",
+      "victim_max_itl_mean": 0.11039928843577702,
+      "intruder_ttft_mean": 328.4391996761163
+    },
+    "ppd": {
+      "mode": "ppd",
+      "scenario": "batch_congestion",
+      "victim_max_itl_mean": 0.0552407776316007,
+      "intruder_ttft_mean": 309.7631397346656
+    }
+  }
+}
