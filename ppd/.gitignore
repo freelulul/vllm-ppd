@@ -1,5 +1,5 @@
 # Results and logs - do not upload to GitHub
-results/
+# results/
 logs/
 
 # Python cache
