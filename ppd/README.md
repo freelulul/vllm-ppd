@@ -202,16 +202,19 @@ ppd/
 │   ├── start_servers.sh            # Quick start (supports --benchmark flag)
 │   ├── stop_servers.sh             # Stop all servers
 │   ├── run_pd_separation_test.sh   # PD test script
-│   └── generate_analysis.py        # Generate analysis visualizations
+│   ├── generate_analysis.py        # Generate analysis visualizations
+│   └── plot_qps_curves.py          # Plot QPS vs Latency curves
 ├── src/                            # Python source code
 │   ├── disagg_proxy_ppd.py         # PPD-aware proxy server
 │   ├── disagg_proxy_benchmark.py   # Benchmark proxy with metrics
 │   ├── comprehensive_benchmark.py  # Comprehensive benchmark (24 configs)
+│   ├── qps_benchmark.py            # QPS vs Latency benchmark (Poisson arrival)
 │   ├── hol_blocking_test.py        # HOL blocking test suite (5 scenarios)
 │   ├── rag_bomb_test.py            # RAG bomb interference test
 │   └── test_cache_hypothesis.py    # PPD KV cache verification test
 ├── results/                        # Test results
 │   ├── benchmark_*.json            # Benchmark results
+│   ├── qps_benchmark_*.json        # QPS benchmark results
 │   ├── hol_blocking_*.json         # HOL blocking test results
 │   └── rag_bomb_*.json             # RAG bomb test results
 └── logs/                           # Log files
@@ -542,6 +545,47 @@ Tests interference from large RAG documents:
 
 ```bash
 python src/rag_bomb_test.py
+```
+
+### 4. QPS Benchmark (System Research Standard)
+
+Tests sustained load using Poisson arrival process to generate QPS vs Latency curves:
+
+```bash
+# Run all 4 workloads with full QPS sweep (recommended for paper)
+python src/qps_benchmark.py --duration 45
+
+# Run specific workload
+python src/qps_benchmark.py --workload W1 --duration 30
+
+# Custom QPS sweep
+python src/qps_benchmark.py --qps "0.5,1.0,2.0,4.0" --duration 30
+
+# List available workloads
+python src/qps_benchmark.py --list
+```
+
+**Workloads:**
+
+| Workload | Input | Output | Description | Expected Winner |
+|----------|-------|--------|-------------|-----------------|
+| W1_Chat_Balanced | 512 | 256 | Daily conversation | PPD |
+| W2_RAG_ReadHeavy | 4096 | 128 | Document Q&A | PD at high load |
+| W3_Agent_WriteHeavy | 256 | 1024 | Code/novel generation | PPD or tie |
+| W4_Limit_Context | 8192 | 64 | Bandwidth stress test | System dependent |
+
+**Expected Curve Shapes:**
+
+1. **W1 (Chat):** PPD curve always lower, or crosses only at very high QPS
+2. **W2 (RAG):** PPD curve shoots up like a vertical wall at medium QPS (HOL blocking)
+3. **W3 (Agent):** Both similar, PPD slightly better
+4. **W4 (Limit):** Both may hit OOM or TCP bandwidth wall
+
+**Plot QPS Curves:**
+
+```bash
+# Generate visualizations from QPS benchmark results
+python scripts/plot_qps_curves.py --latest
 ```
 
 ### Analysis and Visualization
