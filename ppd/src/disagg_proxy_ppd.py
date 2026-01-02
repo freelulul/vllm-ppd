@@ -39,7 +39,7 @@ from typing import Any
 import aiohttp
 import msgpack
 import zmq
-from quart import Quart, make_response, request
+from quart import Quart, make_response, request, Response
 
 # Global state
 count = 0
@@ -208,6 +208,7 @@ app = Quart(__name__)
 
 
 async def forward_request(url, data, request_id):
+    """Forward request to vLLM with true SSE streaming."""
     async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
         headers = {
             "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
@@ -215,8 +216,10 @@ async def forward_request(url, data, request_id):
         }
         async with session.post(url=url, json=data, headers=headers) as response:
             if response.status == 200:
-                async for chunk_bytes in response.content.iter_chunked(1024):
-                    yield chunk_bytes
+                # Use iter_any() for true streaming - yields data as soon as available
+                async for chunk_bytes in response.content.iter_any():
+                    if chunk_bytes:
+                        yield chunk_bytes
 
 
 @app.route("/v1/completions", methods=["POST"])
@@ -265,14 +268,27 @@ async def handle_request():
             count += 1
 
             # Send directly to D
-            generator = forward_request(
-                f"http://{decode_addr}{request.path}",
-                original_request_data,
-                request_id
-            )
-            response = await make_response(generator)
-            response.timeout = None
-            return response
+            is_streaming = original_request_data.get("stream", False)
+            target_url = f"http://{decode_addr}{request.path}"
+
+            if is_streaming:
+                # Return proper SSE streaming response
+                return Response(
+                    forward_request(target_url, original_request_data, request_id),
+                    mimetype="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                        "Transfer-Encoding": "chunked",
+                    }
+                )
+            else:
+                # Non-streaming: collect full response and return as JSON
+                response_bytes = b""
+                async for chunk in forward_request(target_url, original_request_data, request_id):
+                    response_bytes += chunk
+                return response_bytes, 200, {"Content-Type": "application/json"}
 
         else:
             # PD mode: Normal P→D flow
@@ -303,14 +319,27 @@ async def handle_request():
                 continue
 
             # Step 2: Decode on D (with KV from P)
-            generator = forward_request(
-                f"http://{decode_addr}{request.path}",
-                original_request_data,
-                request_id
-            )
-            response = await make_response(generator)
-            response.timeout = None
-            return response
+            is_streaming = original_request_data.get("stream", False)
+            decode_url = f"http://{decode_addr}{request.path}"
+
+            if is_streaming:
+                # Return proper SSE streaming response
+                return Response(
+                    forward_request(decode_url, original_request_data, request_id),
+                    mimetype="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                        "Transfer-Encoding": "chunked",
+                    }
+                )
+            else:
+                # Non-streaming: collect full response and return as JSON
+                response_bytes = b""
+                async for chunk in forward_request(decode_url, original_request_data, request_id):
+                    response_bytes += chunk
+                return response_bytes, 200, {"Content-Type": "application/json"}
 
     except Exception as e:
         import sys

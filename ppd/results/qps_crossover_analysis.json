@@ -1,0 +1,70 @@
+{
+  "W1_Chat_Balanced": {
+    "winners_by_qps": {
+      "0.1": "replication",
+      "0.5": "ppd",
+      "1.0": "ppd",
+      "2.0": "replication",
+      "4.0": "replication",
+      "8.0": "ppd",
+      "16.0": "ppd"
+    },
+    "ppd_beats_repl_qps": 0.5,
+    "max_ppd_vs_repl_advantage_pct": 78.9187773801489,
+    "max_ppd_vs_repl_qps": 16.0,
+    "pd_beats_repl_qps": null,
+    "max_pd_vs_repl_advantage_pct": 0,
+    "max_pd_vs_repl_qps": null
+  },
+  "W2_RAG_ReadHeavy": {
+    "winners_by_qps": {
+      "0.1": "ppd",
+      "0.5": "replication",
+      "1.0": "replication",
+      "2.0": "replication",
+      "4.0": "ppd",
+      "8.0": "replication",
+      "16.0": "replication"
+    },
+    "ppd_beats_repl_qps": 0.1,
+    "max_ppd_vs_repl_advantage_pct": 1.0021145939938507,
+    "max_ppd_vs_repl_qps": 0.1,
+    "pd_beats_repl_qps": null,
+    "max_pd_vs_repl_advantage_pct": 0,
+    "max_pd_vs_repl_qps": null
+  },
+  "W3_Agent_WriteHeavy": {
+    "winners_by_qps": {
+      "0.1": "ppd",
+      "0.5": "ppd",
+      "1.0": "replication",
+      "2.0": "ppd",
+      "4.0": "ppd",
+      "8.0": "ppd",
+      "16.0": "ppd"
+    },
+    "ppd_beats_repl_qps": 0.1,
+    "max_ppd_vs_repl_advantage_pct": 28.04782658513483,
+    "max_ppd_vs_repl_qps": 2.0,
+    "pd_beats_repl_qps": null,
+    "max_pd_vs_repl_advantage_pct": 0,
+    "max_pd_vs_repl_qps": null
+  },
+  "W4_Limit_Context": {
+    "winners_by_qps": {
+      "0.1": "ppd",
+      "0.5": "ppd",
+      "1.0": "replication",
+      "2.0": "replication",
+      "4.0": "replication",
+      "8.0": "replication",
+      "16.0": "replication"
+    },
+    "ppd_beats_repl_qps": 0.1,
+    "max_ppd_vs_repl_advantage_pct": 5.935899110085001,
+    "max_ppd_vs_repl_qps": 0.5,
+    "pd_beats_repl_qps": null,
+    "max_pd_vs_repl_advantage_pct": 0,
+    "max_pd_vs_repl_qps": null
+  }
+}

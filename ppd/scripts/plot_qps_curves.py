@@ -17,6 +17,8 @@ Usage:
     python scripts/plot_qps_curves.py results/qps_benchmark_*.json
     python scripts/plot_qps_curves.py results/merged_3mode_*.json  # For 3-mode comparison
     python scripts/plot_qps_curves.py --latest  # Use most recent result
+
+Outputs: results/qps_*.png
 """
 
 import argparse
@@ -26,7 +28,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 RESULTS_DIR = Path(__file__).parent.parent / "results"
-DOCS_DIR = Path(__file__).parent.parent / "docs"
+OUTPUT_DIR = RESULTS_DIR  # Output plots to results/ folder
 
 
 def load_results(filepath: str = None) -> dict:
@@ -45,8 +47,17 @@ def load_results(filepath: str = None) -> dict:
 
 
 def extract_data(results: dict) -> tuple[dict, list]:
-    """Extract data organized by workload and mode. Returns (data, available_modes)."""
-    data = {}
+    """Extract data organized by workload and mode, averaging across multiple runs.
+
+    - Excludes anomalous runs (sample_count=0 or failure_rate > 50%)
+    - Averages metrics across valid runs
+
+    Returns (data, available_modes).
+    """
+    from collections import defaultdict
+
+    # Group results by (workload, mode, qps)
+    grouped = defaultdict(list)
     all_modes = set()
 
     for r in results["results"]:
@@ -55,22 +66,53 @@ def extract_data(results: dict) -> tuple[dict, list]:
         qps = r["target_qps"]
         all_modes.add(mode)
 
-        if wk not in data:
-            data[wk] = {}
+        sample_count = r.get("sample_count", 0)
+        failure_count = r.get("failure_count", 0)
 
-        if mode not in data[wk]:
-            data[wk][mode] = {}
+        # Skip anomalous runs: no samples or >50% failure rate
+        if sample_count == 0:
+            continue
+        failure_rate = failure_count / sample_count if sample_count > 0 else 1.0
+        if failure_rate > 0.5:
+            print(f"  [WARN] Excluding {wk} {mode} QPS={qps}: {failure_rate*100:.0f}% failure rate")
+            continue
 
-        data[wk][mode][qps] = {
+        grouped[(wk, mode, qps)].append({
             "p50_ttft": r["p50_ttft"],
             "p90_ttft": r["p90_ttft"],
             "p99_ttft": r["p99_ttft"],
             "avg_e2e": r["avg_e2e"],
             "p99_e2e": r["p99_e2e"],
-            "success_rate": r["success_count"] / r["sample_count"] if r["sample_count"] > 0 else 0,
+            "success_rate": r["success_count"] / sample_count,
             "real_qps": r["real_qps"],
             "avg_throughput_tps": r.get("avg_throughput_tps", 0),
             "total_tokens": r.get("total_tokens", 0),
+        })
+
+    # Average across runs
+    data = {}
+    for (wk, mode, qps), runs in grouped.items():
+        if wk not in data:
+            data[wk] = {}
+        if mode not in data[wk]:
+            data[wk][mode] = {}
+
+        n_runs = len(runs)
+        if n_runs == 0:
+            continue
+
+        # Compute average of each metric
+        data[wk][mode][qps] = {
+            "p50_ttft": sum(r["p50_ttft"] for r in runs) / n_runs,
+            "p90_ttft": sum(r["p90_ttft"] for r in runs) / n_runs,
+            "p99_ttft": sum(r["p99_ttft"] for r in runs) / n_runs,
+            "avg_e2e": sum(r["avg_e2e"] for r in runs) / n_runs,
+            "p99_e2e": sum(r["p99_e2e"] for r in runs) / n_runs,
+            "success_rate": sum(r["success_rate"] for r in runs) / n_runs,
+            "real_qps": sum(r["real_qps"] for r in runs) / n_runs,
+            "avg_throughput_tps": sum(r["avg_throughput_tps"] for r in runs) / n_runs,
+            "total_tokens": sum(r["total_tokens"] for r in runs) / n_runs,
+            "n_runs": n_runs,  # Track how many runs were averaged
         }
 
     # Determine mode order (replication first if present, then ppd, then pd)
@@ -453,7 +495,7 @@ def main():
     parser = argparse.ArgumentParser(description="Plot QPS vs Latency curves")
     parser.add_argument("result_file", nargs="?", help="Path to QPS benchmark result JSON")
     parser.add_argument("--latest", action="store_true", help="Use latest result file")
-    parser.add_argument("--output-dir", type=str, default=str(DOCS_DIR),
+    parser.add_argument("--output-dir", type=str, default=str(OUTPUT_DIR),
                         help="Output directory for figures")
 
     args = parser.parse_args()

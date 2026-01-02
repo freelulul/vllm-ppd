@@ -64,17 +64,39 @@ rm -f "$LOG_DIR"/*.log 2>/dev/null || true
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
+# TCP version
+# NCCL_IB_DISABLE=1 and NCCL_NET=Socket forced TCP transport
+
+# echo "=============================================="
+# echo "Starting vLLM PD/PPD Servers"
+# echo "  Mode: $MODE"
+# echo "  Benchmark: $BENCHMARK_MODE"
+# echo "=============================================="
+
+# export NCCL_IB_DISABLE=1
+# export NCCL_NET=Socket
+# export NCCL_DEBUG=WARN
+# export VLLM_LOGGING_LEVEL=INFO
+
+
+# NVlink version
+# Allow NCCL to auto-detect NVLink between GPU0 and GPU1
+
 echo "=============================================="
 echo "Starting vLLM PD/PPD Servers"
 echo "  Mode: $MODE"
 echo "  Benchmark: $BENCHMARK_MODE"
+echo "  KV Transfer: NVLink (6x bonded)"
 echo "=============================================="
 
-# Environment
-export NCCL_IB_DISABLE=1
-export NCCL_NET=Socket
-export NCCL_DEBUG=WARN
+export NCCL_DEBUG=INFO
 export VLLM_LOGGING_LEVEL=INFO
+# Force P2P and NVLink
+export NCCL_P2P_LEVEL=NVL
+export NCCL_P2P_DISABLE=0
+export NCCL_SHM_DISABLE=0
+export NCCL_NET_GDR_LEVEL=5
+export CUDA_DEVICE_MAX_CONNECTIONS=32
 
 # Cleanup existing
 pkill -f "vllm serve.*$MODEL_PATH" 2>/dev/null || true

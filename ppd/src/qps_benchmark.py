@@ -89,8 +89,38 @@ class RequestMetrics:
     e2e_latency_ms: float  # End to End Latency
     output_tokens: int
     throughput_tps: float  # tokens / sec
-    success: bool
+    tpot_ms: float = 0.0  # Time Per Output Token (excluding TTFT)
+    success: bool = True
     error: Optional[str] = None
+    turn: int = 2  # Which turn this is (1 or 2)
+
+
+@dataclass
+class TurnMetrics:
+    """Aggregated metrics for a single turn (Turn 1 or Turn 2)."""
+    turn: int = 1
+    sample_count: int = 0
+    success_count: int = 0
+
+    # TTFT statistics (ms)
+    avg_ttft: float = 0.0
+    p50_ttft: float = 0.0
+    p90_ttft: float = 0.0
+    p99_ttft: float = 0.0
+
+    # TPOT statistics (ms) - Time Per Output Token
+    avg_tpot: float = 0.0
+    p50_tpot: float = 0.0
+    p99_tpot: float = 0.0
+
+    # E2E latency statistics (ms)
+    avg_e2e: float = 0.0
+    p50_e2e: float = 0.0
+    p99_e2e: float = 0.0
+
+    # Throughput
+    avg_throughput_tps: float = 0.0
+    total_tokens: int = 0
 
 
 @dataclass
@@ -103,13 +133,13 @@ class QPSStepResult:
     mode: str
     duration_s: int
 
-    # Sample statistics
+    # Sample statistics (Turn 2 for backward compatibility)
     sample_count: int = 0
     success_count: int = 0
     failure_count: int = 0
     real_qps: float = 0.0
 
-    # TTFT statistics (ms)
+    # Turn 2 TTFT statistics (ms) - backward compatible
     avg_ttft: float = 0.0
     p50_ttft: float = 0.0
     p90_ttft: float = 0.0
@@ -117,7 +147,7 @@ class QPSStepResult:
     min_ttft: float = 0.0
     max_ttft: float = 0.0
 
-    # E2E latency statistics (ms)
+    # Turn 2 E2E latency statistics (ms)
     avg_e2e: float = 0.0
     p50_e2e: float = 0.0
     p90_e2e: float = 0.0
@@ -126,6 +156,10 @@ class QPSStepResult:
     # Throughput
     avg_throughput_tps: float = 0.0
     total_tokens: int = 0
+
+    # Per-turn detailed metrics (NEW)
+    turn1_metrics: Optional[TurnMetrics] = None
+    turn2_metrics: Optional[TurnMetrics] = None
 
     # Raw metrics for debugging
     raw_metrics: list = field(default_factory=list)
@@ -209,10 +243,88 @@ async def clear_state(session: aiohttp.ClientSession):
         pass
 
 
-async def do_turn1(session: aiohttp.ClientSession, conv_id: str) -> str:
-    """Execute Turn 1 to establish conversation (required for D-direct in PPD)."""
+async def nccl_warmup(session: aiohttp.ClientSession) -> bool:
+    """Warmup NCCL connections for both PD and PPD modes.
+
+    This eliminates the NCCL connection establishment overhead (~2-3 seconds)
+    that would otherwise affect the first test run.
+
+    Returns:
+        True if warmup succeeded for both modes
+    """
+    print("\n" + "=" * 50)
+    print("NCCL Warmup Phase")
+    print("=" * 50)
+    print("  Sending warmup requests to establish NCCL connections...")
+
+    success = True
+    for mode in ["pd", "ppd"]:
+        await set_mode(session, mode)
+        await asyncio.sleep(0.5)
+
+        conv_id = f"warmup_{mode}_{int(time.time())}"
+
+        # Send Turn 1
+        history, _ = await do_turn1(session, conv_id, mode=mode, collect_metrics=False)
+        if not history:
+            print(f"  Warning: {mode.upper()} Turn 1 warmup failed")
+            success = False
+            continue
+
+        # Send Turn 2 (this triggers KV transfer in PD/PPD)
+        prompt = history + "\nUser: Warmup request. Respond briefly.\nAssistant:"
+        try:
+            async with session.post(
+                f"{PROXY_URL}/v1/completions",
+                json={
+                    "model": MODEL_PATH,
+                    "prompt": prompt,
+                    "max_tokens": 20,
+                    "temperature": 0.1,
+                    "stream": False,  # Non-streaming for warmup
+                },
+                timeout=aiohttp.ClientTimeout(total=120),
+            ) as resp:
+                if resp.status == 200:
+                    await resp.json()  # Just wait for response
+                    print(f"  {mode.upper()}: NCCL warmup complete")
+                else:
+                    print(f"  Warning: {mode.upper()} Turn 2 warmup failed (status {resp.status})")
+                    success = False
+        except Exception as e:
+            print(f"  Warning: {mode.upper()} warmup error: {e}")
+            success = False
+
+        await asyncio.sleep(1)
+
+    # Clear state after warmup
+    await clear_state(session)
+    print("  Warmup complete. Cleared state for fresh benchmark start.")
+    print("=" * 50 + "\n")
+
+    return success
+
+
+async def do_turn1(
+    session: aiohttp.ClientSession,
+    conv_id: str,
+    mode: str = "ppd",
+    workload: str = "",
+    qps: float = 0.0,
+    collect_metrics: bool = False
+) -> tuple[str, Optional[RequestMetrics]]:
+    """Execute Turn 1 to establish conversation (required for D-direct in PPD).
+
+    Uses non-streaming for reliability (only 20 tokens needed).
+
+    Returns:
+        tuple: (history_string, metrics or None)
+    """
     prompt = f"Hello, I am user {conv_id}. Please acknowledge."
     full_prompt = f"User: {prompt}\nAssistant:"
+    input_len = len(full_prompt.split()) + 10  # Approximate token count
+
+    start_t = time.perf_counter()
 
     try:
         async with session.post(
@@ -222,29 +334,48 @@ async def do_turn1(session: aiohttp.ClientSession, conv_id: str) -> str:
                 "prompt": full_prompt,
                 "max_tokens": 20,
                 "temperature": 0.1,
-                "stream": True,
+                "stream": False,  # Non-streaming for Turn 1
             },
-            timeout=aiohttp.ClientTimeout(total=60),
+            timeout=aiohttp.ClientTimeout(total=120),
         ) as resp:
             if resp.status != 200:
-                return ""
+                return "", None
 
-            response_text = ""
-            async for line in resp.content:
-                if not line:
-                    continue
-                line_str = line.decode("utf-8").strip()
-                if line_str.startswith("data: ") and line_str != "data: [DONE]":
-                    try:
-                        chunk = json.loads(line_str[6:])
-                        if chunk.get("choices") and chunk["choices"][0].get("text"):
-                            response_text += chunk["choices"][0]["text"]
-                    except json.JSONDecodeError:
-                        continue
+            result = await resp.json()
+            response_text = result.get("choices", [{}])[0].get("text", "")
+            tokens_received = result.get("usage", {}).get("completion_tokens", 0)
+            ttft = (time.perf_counter() - start_t) * 1000  # For non-streaming, TTFT = E2E
 
-            return f"{full_prompt}{response_text}"
+            history = f"{full_prompt}{response_text}"
+
+            if collect_metrics:
+                end_t = time.perf_counter()
+                latency = (end_t - start_t) * 1000
+                tps = (tokens_received / (latency / 1000)) if latency > 0 else 0
+                tpot = 0.0  # Can't measure TPOT accurately for non-streaming
+
+                metrics = RequestMetrics(
+                    req_id=f"{conv_id}_t1",
+                    mode=mode,
+                    workload=workload,
+                    qps_target=qps,
+                    input_len=input_len,
+                    output_len=20,
+                    start_time=start_t,
+                    ttft_ms=ttft,
+                    e2e_latency_ms=latency,
+                    output_tokens=tokens_received,
+                    throughput_tps=tps,
+                    tpot_ms=tpot,
+                    success=True,
+                    turn=1
+                )
+                return history, metrics
+
+            return history, None
+
     except Exception:
-        return ""
+        return "", None
 
 
 async def send_request(
@@ -292,23 +423,30 @@ async def send_request(
                     success=False, error=f"HTTP {resp.status}"
                 )
 
-            async for line in resp.content:
-                if not line:
+            # Use iter_any() for proper streaming handling with Quart
+            buffer = ""
+            async for chunk_bytes in resp.content.iter_any():
+                if not chunk_bytes:
                     continue
-                decoded = line.decode("utf-8").strip()
-                if decoded.startswith("data: ") and decoded != "data: [DONE]":
-                    try:
-                        chunk = json.loads(decoded[6:])
-                        if not first_token and chunk.get("choices"):
-                            if chunk["choices"][0].get("text"):
-                                ttft = (time.perf_counter() - start_t) * 1000
-                                first_token = True
-                        if chunk.get("choices") and chunk["choices"][0].get("text"):
-                            tokens_received += 1
-                        if chunk.get("usage"):
-                            tokens_received = chunk["usage"].get("completion_tokens", tokens_received)
-                    except json.JSONDecodeError:
-                        continue
+                buffer += chunk_bytes.decode("utf-8", errors="ignore")
+
+                # Process complete lines from buffer
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    line = line.strip()
+                    if line.startswith("data: ") and line != "data: [DONE]":
+                        try:
+                            chunk = json.loads(line[6:])
+                            if not first_token and chunk.get("choices"):
+                                if chunk["choices"][0].get("text"):
+                                    ttft = (time.perf_counter() - start_t) * 1000
+                                    first_token = True
+                            if chunk.get("choices") and chunk["choices"][0].get("text"):
+                                tokens_received += 1
+                            if chunk.get("usage"):
+                                tokens_received = chunk["usage"].get("completion_tokens", tokens_received)
+                        except json.JSONDecodeError:
+                            continue
     except asyncio.TimeoutError:
         return RequestMetrics(
             req_id=req_id, mode=mode, workload=workload, qps_target=qps,
@@ -327,13 +465,55 @@ async def send_request(
     end_t = time.perf_counter()
     latency = (end_t - start_t) * 1000
     tps = (tokens_received / (latency / 1000)) if latency > 0 else 0
+    # TPOT = (E2E - TTFT) / (tokens - 1) for tokens after first
+    tpot = (latency - ttft) / max(tokens_received - 1, 1) if tokens_received > 1 else 0
 
     return RequestMetrics(
         req_id=req_id, mode=mode, workload=workload, qps_target=qps,
         input_len=input_len, output_len=output_len, start_time=start_t,
         ttft_ms=ttft, e2e_latency_ms=latency, output_tokens=tokens_received,
-        throughput_tps=tps, success=True
+        throughput_tps=tps, tpot_ms=tpot, success=True, turn=2
     )
+
+
+def compute_turn_metrics(metrics_list: list[RequestMetrics], turn: int) -> TurnMetrics:
+    """Compute aggregated metrics for a specific turn."""
+    result = TurnMetrics(turn=turn)
+    successful = [m for m in metrics_list if m.success and m.turn == turn]
+
+    result.sample_count = len([m for m in metrics_list if m.turn == turn])
+    result.success_count = len(successful)
+
+    if not successful:
+        return result
+
+    ttfts = [m.ttft_ms for m in successful if m.ttft_ms > 0]
+    tpots = [m.tpot_ms for m in successful if m.tpot_ms > 0]
+    e2es = [m.e2e_latency_ms for m in successful]
+    throughputs = [m.throughput_tps for m in successful]
+
+    if ttfts:
+        result.avg_ttft = np.mean(ttfts)
+        result.p50_ttft = np.percentile(ttfts, 50)
+        result.p90_ttft = np.percentile(ttfts, 90)
+        result.p99_ttft = np.percentile(ttfts, 99)
+
+    if tpots:
+        result.avg_tpot = np.mean(tpots)
+        result.p50_tpot = np.percentile(tpots, 50)
+        result.p99_tpot = np.percentile(tpots, 99)
+
+    if e2es:
+        result.avg_e2e = np.mean(e2es)
+        result.p50_e2e = np.percentile(e2es, 50)
+        result.p99_e2e = np.percentile(e2es, 99)
+
+    if throughputs:
+        result.avg_throughput_tps = np.mean(throughputs)
+
+    result.total_tokens = sum(m.output_tokens for m in successful)
+
+    return result
 
 
 async def run_qps_step(
@@ -354,6 +534,8 @@ async def run_qps_step(
         duration_s=duration_s,
     )
 
+    all_metrics = []  # Collect metrics from both turns
+
     async with aiohttp.ClientSession() as session:
         # Set mode
         await set_mode(session, mode)
@@ -361,26 +543,40 @@ async def run_qps_step(
         await asyncio.sleep(1)
 
         # Phase 1: Establish conversations (Turn 1) for all expected requests
+        # NOW WITH METRICS COLLECTION
         expected_requests = int(qps * duration_s)
         if expected_requests == 0:
             expected_requests = 1
 
         print(f"      Phase 1: Establishing {expected_requests} conversations (Turn 1)...")
         histories = {}
-        turn1_tasks = []
-        for i in range(expected_requests):
-            conv_id = f"{workload.name}_{mode}_{qps}_{i}"
-            turn1_tasks.append((conv_id, do_turn1(session, conv_id)))
+        turn1_metrics = []
 
         # Execute Turn 1 for all conversations in parallel batches
         batch_size = 20  # Limit concurrent Turn 1 requests
-        for batch_start in range(0, len(turn1_tasks), batch_size):
-            batch = turn1_tasks[batch_start:batch_start + batch_size]
-            tasks = [task for _, task in batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for (conv_id, _), hist in zip(batch, results):
-                if isinstance(hist, str) and hist:
-                    histories[conv_id] = hist
+        for batch_start in range(0, expected_requests, batch_size):
+            batch_end = min(batch_start + batch_size, expected_requests)
+            batch_tasks = []
+            batch_conv_ids = []
+
+            for i in range(batch_start, batch_end):
+                conv_id = f"{workload.name}_{mode}_{qps}_{i}"
+                batch_conv_ids.append(conv_id)
+                batch_tasks.append(
+                    do_turn1(session, conv_id, mode, workload.name, qps, collect_metrics=True)
+                )
+
+            results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+
+            for conv_id, res in zip(batch_conv_ids, results):
+                if isinstance(res, tuple) and len(res) == 2:
+                    hist, metrics = res
+                    if hist:
+                        histories[conv_id] = hist
+                    if metrics:
+                        turn1_metrics.append(metrics)
+                        all_metrics.append(metrics)
+
             await asyncio.sleep(0.2)  # Small delay between batches
 
         print(f"      Phase 1 complete: {len(histories)}/{expected_requests} conversations established")
@@ -388,6 +584,11 @@ async def run_qps_step(
         if not histories:
             print("      ERROR: No conversations established, skipping this step")
             return result
+
+        # Compute Turn 1 metrics
+        result.turn1_metrics = compute_turn_metrics(turn1_metrics, turn=1)
+        print(f"      Turn 1 metrics: Avg TTFT={result.turn1_metrics.avg_ttft:.1f}ms, "
+              f"Avg TPOT={result.turn1_metrics.avg_tpot:.1f}ms")
 
         # Clear state after Turn 1 (but conversations remain in proxy)
         await asyncio.sleep(1)
@@ -397,15 +598,22 @@ async def run_qps_step(
 
         # Generate Poisson arrival times
         # Inter-arrival time follows Exponential distribution with rate = qps
-        arrival_intervals = np.random.exponential(1.0 / qps, expected_requests)
+        # For low QPS, we may need more samples to get enough arrivals within duration
+        max_attempts = max(expected_requests * 3, 10)
+        arrival_intervals = np.random.exponential(1.0 / qps, max_attempts)
         arrival_times = np.cumsum(arrival_intervals)
 
         # Only use arrivals within duration
         arrival_times = arrival_times[arrival_times < duration_s]
-        actual_requests = len(arrival_times)
+
+        # Ensure we have at least 1 request (for very low QPS)
+        if len(arrival_times) == 0:
+            arrival_times = np.array([0.0])  # Send immediately
+
+        actual_requests = min(len(arrival_times), len(histories))
 
         conv_ids = list(histories.keys())[:actual_requests]
-        metrics_list = []
+        turn2_metrics = []
         tasks = []
 
         start_benchmark = time.perf_counter()
@@ -431,13 +639,17 @@ async def run_qps_step(
 
         for r in results:
             if isinstance(r, RequestMetrics):
-                metrics_list.append(r)
+                turn2_metrics.append(r)
+                all_metrics.append(r)
 
-        # Calculate statistics
-        successful = [m for m in metrics_list if m.success]
-        failed = [m for m in metrics_list if not m.success]
+        # Compute Turn 2 metrics
+        result.turn2_metrics = compute_turn_metrics(turn2_metrics, turn=2)
 
-        result.sample_count = len(metrics_list)
+        # Calculate statistics (Turn 2 for backward compatibility)
+        successful = [m for m in turn2_metrics if m.success]
+        failed = [m for m in turn2_metrics if not m.success]
+
+        result.sample_count = len(turn2_metrics)
         result.success_count = len(successful)
         result.failure_count = len(failed)
         result.real_qps = len(successful) / duration_s if duration_s > 0 else 0
@@ -491,7 +703,7 @@ async def run_workload_sweep(
     for qps in qps_list:
         print(f"\n  --- QPS: {qps} ---")
 
-        for mode in ["ppd", "pd"]:
+        for mode in ["pd", "ppd"]:  # PD first to avoid NCCL warmup affecting PPD
             step_result = await run_qps_step(mode, workload, qps, duration_s)
             results.append(step_result)
 
@@ -502,10 +714,10 @@ async def run_workload_sweep(
 
 
 def print_summary(all_results: list[QPSStepResult]):
-    """Print summary of all results."""
-    print("\n" + "=" * 100)
-    print("QPS BENCHMARK SUMMARY")
-    print("=" * 100)
+    """Print summary of all results with per-turn metrics."""
+    print("\n" + "=" * 120)
+    print("QPS BENCHMARK SUMMARY (Per-Turn Metrics)")
+    print("=" * 120)
 
     # Group by workload
     workloads = {}
@@ -515,21 +727,39 @@ def print_summary(all_results: list[QPSStepResult]):
         workloads[r.workload].append(r)
 
     for wk_name, results in workloads.items():
-        print(f"\n{wk_name}")
-        print("-" * 90)
-        print(f"{'QPS':<6} {'Mode':<5} {'Success':<10} {'P50 TTFT':<12} {'P99 TTFT':<12} {'Avg E2E':<12} {'Real QPS':<10}")
-        print("-" * 90)
+        print(f"\n{'='*60}")
+        print(f"{wk_name}")
+        print(f"{'='*60}")
 
-        # Sort by QPS then mode
+        # Turn 1 Metrics Table
+        print(f"\n  TURN 1 (Conversation Setup - ~20 tokens)")
+        print(f"  {'-'*100}")
+        print(f"  {'QPS':<6} {'Mode':<5} {'Count':<8} {'Avg TTFT':<12} {'P99 TTFT':<12} {'Avg TPOT':<12} {'Throughput':<12}")
+        print(f"  {'-'*100}")
         for r in sorted(results, key=lambda x: (x.target_qps, x.mode)):
-            print(f"{r.target_qps:<6.1f} {r.mode.upper():<5} "
-                  f"{r.success_count}/{r.sample_count:<6} "
-                  f"{r.p50_ttft:<12.2f} {r.p99_ttft:<12.2f} "
-                  f"{r.avg_e2e:<12.2f} {r.real_qps:<10.2f}")
+            if r.turn1_metrics:
+                t1 = r.turn1_metrics
+                print(f"  {r.target_qps:<6.1f} {r.mode.upper():<5} "
+                      f"{t1.success_count:<8} "
+                      f"{t1.avg_ttft:<12.1f} {t1.p99_ttft:<12.1f} "
+                      f"{t1.avg_tpot:<12.1f} {t1.avg_throughput_tps:<12.1f}")
 
-    print("\n" + "=" * 100)
+        # Turn 2 Metrics Table
+        print(f"\n  TURN 2 (Main Request - {results[0].input_tokens} input, {results[0].output_tokens} output tokens)")
+        print(f"  {'-'*100}")
+        print(f"  {'QPS':<6} {'Mode':<5} {'Success':<10} {'Avg TTFT':<12} {'P99 TTFT':<12} {'Avg TPOT':<12} {'Avg E2E':<12}")
+        print(f"  {'-'*100}")
+        for r in sorted(results, key=lambda x: (x.target_qps, x.mode)):
+            if r.turn2_metrics:
+                t2 = r.turn2_metrics
+                print(f"  {r.target_qps:<6.1f} {r.mode.upper():<5} "
+                      f"{r.success_count}/{r.sample_count:<6} "
+                      f"{t2.avg_ttft:<12.1f} {t2.p99_ttft:<12.1f} "
+                      f"{t2.avg_tpot:<12.1f} {t2.avg_e2e:<12.1f}")
+
+    print("\n" + "=" * 120)
     print("KEY OBSERVATIONS")
-    print("=" * 100)
+    print("=" * 120)
 
     for wk_name, results in workloads.items():
         print(f"\n{wk_name}:")
@@ -539,10 +769,13 @@ def print_summary(all_results: list[QPSStepResult]):
             ppd = next((r for r in results if r.target_qps == qps and r.mode == "ppd"), None)
             pd = next((r for r in results if r.target_qps == qps and r.mode == "pd"), None)
 
-            if ppd and pd and ppd.p99_ttft > 0 and pd.p99_ttft > 0:
-                ratio = ppd.p99_ttft / pd.p99_ttft
-                winner = "PPD" if ratio < 1.0 else "PD"
-                print(f"  QPS {qps}: PPD P99={ppd.p99_ttft:.0f}ms, PD P99={pd.p99_ttft:.0f}ms -> {winner} wins ({ratio:.2f}x)")
+            if ppd and pd and ppd.turn2_metrics and pd.turn2_metrics:
+                t2_ppd = ppd.turn2_metrics
+                t2_pd = pd.turn2_metrics
+                if t2_ppd.p99_ttft > 0 and t2_pd.p99_ttft > 0:
+                    ratio = t2_ppd.p99_ttft / t2_pd.p99_ttft
+                    winner = "PPD" if ratio < 1.0 else "PD"
+                    print(f"  QPS {qps}: PPD T2_P99={t2_ppd.p99_ttft:.0f}ms, PD T2_P99={t2_pd.p99_ttft:.0f}ms -> {winner} wins ({ratio:.2f}x)")
 
 
 async def main():
@@ -555,6 +788,8 @@ async def main():
                         help="Comma-separated QPS values to sweep")
     parser.add_argument("--output", type=str, help="Output file path")
     parser.add_argument("--list", action="store_true", help="List available workloads")
+    parser.add_argument("--runs", type=int, default=1,
+                        help="Number of runs to average (default: 1, use 3-5 for stability)")
 
     args = parser.parse_args()
 
@@ -582,27 +817,51 @@ async def main():
     print(f"Workloads: {len(workloads)}")
     print(f"QPS sweep: {qps_list}")
     print(f"Duration per point: {args.duration}s")
-    print(f"Total experiments: {len(workloads) * len(qps_list) * 2}")
-    print(f"Estimated time: ~{len(workloads) * len(qps_list) * 2 * (args.duration + 10) / 60:.0f} minutes")
+    print(f"Runs per config: {args.runs}")
+    print(f"Total experiments: {len(workloads) * len(qps_list) * 2 * args.runs}")
+    print(f"Estimated time: ~{len(workloads) * len(qps_list) * 2 * args.runs * (args.duration + 10) / 60:.0f} minutes")
     print("=" * 70)
 
-    # Check connection
+    # Check connection and do NCCL warmup
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"{PROXY_URL}/status") as resp:
+            # Use /mode to check connection (available in both proxy versions)
+            async with session.get(f"{PROXY_URL}/mode") as resp:
                 if resp.status == 200:
-                    status = await resp.json()
-                    print(f"Connected: {status}")
+                    mode_info = await resp.json()
+                    print(f"Connected to proxy at {PROXY_URL} (mode: {mode_info.get('mode', 'unknown')})")
+                else:
+                    print(f"Proxy returned status {resp.status}")
+                    return
+
+            # NCCL warmup - eliminates connection establishment overhead
+            # This ensures fair comparison between PD and PPD
+            await nccl_warmup(session)
+
     except Exception as e:
         print(f"Cannot connect to proxy at {PROXY_URL}: {e}")
         print("Start servers with: ./scripts/start_servers.sh ppd --benchmark")
         return
 
-    # Run benchmark
+    # Run benchmark (multiple runs if specified)
     all_results = []
-    for workload in workloads:
-        results = await run_workload_sweep(workload, qps_list, args.duration)
-        all_results.extend(results)
+    for run_idx in range(args.runs):
+        if args.runs > 1:
+            print(f"\n{'#'*70}")
+            print(f"RUN {run_idx + 1} of {args.runs}")
+            print(f"{'#'*70}")
+
+        for workload in workloads:
+            results = await run_workload_sweep(workload, qps_list, args.duration)
+            # Tag results with run number
+            for r in results:
+                r.raw_metrics.insert(0, {"run": run_idx + 1})
+            all_results.extend(results)
+
+        # Cooldown between runs
+        if run_idx < args.runs - 1:
+            print("\n  Cooling down for 10 seconds before next run...")
+            await asyncio.sleep(10)
 
     # Print summary
     print_summary(all_results)
@@ -621,6 +880,7 @@ async def main():
                 "duration_s": args.duration,
             },
             "results": [asdict(r) for r in all_results],
+            "runs": args.runs,
         }, f, indent=2)
 
     print(f"\nResults saved to: {output_file}")
