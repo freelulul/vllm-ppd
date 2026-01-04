@@ -1,14 +1,85 @@
-# vLLM PD/PPD/Replication Benchmark
+# vLLM Disaggregated Serving Optimizer
 
-Benchmark suite comparing three inference modes for multi-turn conversations on vLLM.
+Dynamic request routing optimizer for multi-turn LLM inference across heterogeneous GPU pools.
 
-## Modes Overview
+---
 
-| Mode | Description | Turn 1 | Turn 2+ |
-|------|-------------|--------|---------|
-| **PD** | Prefill-Decode separation | P→D (KV transfer) | P→D (KV transfer) |
-| **PPD** | Prompt-aware PD | P→D (KV transfer) | D-direct (prefix cache) |
-| **Replication** | Data parallelism (2 workers) | Worker X | Worker X (prefix cache) |
+## Project Overview
+
+### Core Idea
+
+Modern LLM serving systems face a fundamental trade-off between **resource efficiency** (separating prefill and decode) and **latency overhead** (KV cache transfer). This project explores how to **dynamically route requests** across a heterogeneous GPU pool based on workload characteristics.
+
+**The central hypothesis**: Different workload patterns (conversation length, I/O ratio, context size) favor different serving strategies. Rather than picking one mode globally, we can achieve better performance by routing each request to the optimal execution path.
+
+### GPU Pool Architecture
+
+The system manages a heterogeneous pool of GPU resources with different capabilities:
+
+| Label | Capability | Use Case |
+|-------|------------|----------|
+| **P** | Prefill only | Dedicated prefill workers for long-context requests |
+| **D** | Decode only | Dedicated decode workers for generation-heavy tasks |
+| **PD** | Both P and D | Full disaggregation with KV transfer between phases |
+| **pD** | Prefix extension + D | Leverages prefix cache, skips KV transfer for cached prompts |
+
+### Three Execution Modes
+
+| Mode | Description | Turn 1 | Turn 2+ | Trade-off |
+|------|-------------|--------|---------|-----------|
+| **PD** | Full disaggregation | P→D (KV transfer) | P→D (KV transfer) | Isolation ✓, Transfer overhead ✗ |
+| **PPD** | Prefix-aware PD | P→D (KV transfer) | D-direct (prefix cache) | No transfer ✓, Less isolation ✗ |
+| **Replication** | Data parallelism | Worker X | Worker X (prefix cache) | Double capacity ✓, No isolation ✗ |
+
+### Discovered Trade-offs
+
+Through comprehensive benchmarking, we identified the following performance characteristics:
+
+#### 1. PPD vs PD
+
+**PPD wins in Turn 2 latency** (50-75% faster TTFT) by using prefix cache instead of KV transfer:
+- **W1 (Chat)**: 70.6% faster on average
+- **W2 (RAG)**: 44.4% faster (diminishes at high QPS due to HOL blocking)
+- **W3 (Agent)**: 61.8% faster
+- **W4 (Extreme)**: 34.1% faster (bandwidth still matters)
+
+**When PD wins**: Never in Turn 2 TTFT, but provides better isolation at extreme load (prevents HOL blocking from long prefills).
+
+#### 2. PPD vs Replication
+
+**Workload-dependent winner**:
+- **W1 (Chat)**: PPD ~8% better (efficient single-GPU utilization)
+- **W2 (RAG)**: Replication better at high QPS (double GPU capacity prevents saturation)
+- **W3 (Agent)**: PPD ~15% better (prefill-decode isolation helps long outputs)
+- **W4 (Extreme)**: Replication wins (no network overhead, double memory bandwidth)
+
+**Key insight**: Replication's advantage grows with context size and QPS. PPD's advantage grows with output length and moderate QPS.
+
+#### 3. Critical Crossover Points
+
+- **Low QPS (<2)**: PPD wins almost universally (prefix cache benefit dominates)
+- **Medium QPS (2-8)**: Trade-off zone (depends on workload I/O ratio)
+- **High QPS (>8)**: Replication or PD wins (isolation/capacity matters more than transfer cost)
+
+---
+
+## Project Goal
+
+**Build a dynamic request router** that:
+
+1. **Profiles incoming requests**: Extract features (input length, expected output length, conversation turn, historical latency)
+2. **Predicts optimal mode**: Use learned decision boundaries from benchmark data
+3. **Routes to appropriate GPU pool**: Assign request to P, D, PD, or pD workers based on prediction
+4. **Adapts to load**: Consider current queue depths and GPU utilization
+
+**Success metric**: Achieve better P99 latency than any single static mode across diverse workload mixes.
+
+**Future work**:
+- Machine learning-based routing (train on benchmark data)
+- Online learning to adapt to deployment-specific patterns
+- Cost-aware routing ($/token optimization, not just latency)
+
+---
 
 ## Project Structure
 
@@ -29,6 +100,89 @@ ppd/
 ├── results/                     # Benchmark results (JSON + PNG plots)
 └── logs/                        # Server logs
 ```
+
+---
+
+## Workload Design
+
+### Benchmark Methodology
+
+- **Arrival Process**: Poisson distribution (realistic traffic simulation)
+- **QPS Sweep**: 0.1, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0 (finds saturation points)
+- **Duration**: 60s per QPS point
+- **Runs**: 3 runs averaged (filters anomalies >30% failure rate)
+- **Warmup**: NCCL connection establishment before each benchmark
+
+### Multi-Turn Conversation Protocol
+
+Each benchmark run simulates realistic multi-turn conversations:
+
+**Phase 1 - Conversation Establishment (Turn 1)**:
+- Send initial greeting: `"Hello, I am user {conv_id}. Please acknowledge."`
+- Server responds with ~20 tokens
+- Conversation state cached on decode server
+- **Non-streaming** for reliability
+
+**Phase 2 - Actual Requests (Turn 2)**:
+- Generate requests with Poisson arrival times
+- Reuse established conversations (triggers prefix cache or KV transfer)
+- Send workload-specific prompts
+- **Streaming** to measure real TTFT
+
+**Warmup Protocol**:
+- Before any benchmark: Send 2 warmup requests (1 per mode)
+- Eliminates NCCL connection overhead (~2-3s first request)
+- Clear state before actual measurement
+
+### Workload Definitions
+
+| Workload | Input | Output | Turns | Description |
+|----------|-------|--------|-------|-------------|
+| **W1_Chat_Balanced** | 512 | 256 | 2 | Daily conversation, latency-sensitive |
+| **W2_RAG_ReadHeavy** | 4096 | 128 | 2 | Long context retrieval, HOL blocking risk |
+| **W3_Agent_WriteHeavy** | 256 | 1024 | 2 | Code/long generation, decode-bound |
+| **W4_Limit_Context** | 8192 | 64 | 2 | Extreme context, bandwidth stress |
+
+### Input Generation
+
+**Prompt Template**:
+```python
+base_text = (
+    "This is a comprehensive benchmark test for the vLLM disaggregated serving system. "
+    "The system separates prefill and decode phases across different GPU instances. "
+    "We are measuring latency under various load conditions to understand performance characteristics. "
+)
+```
+
+**Length Control**:
+- Target tokens → `target_chars = num_tokens * 4` (approximation: 1 token ≈ 4 chars)
+- Repeat base_text to reach target length
+- Add unique request ID: `[REQ:{req_id}] Analyze and respond: {repeated_text}`
+
+**Output Control**:
+- `max_tokens` parameter in API request
+- Temperature: 0.8 (realistic diversity)
+- Streaming: `True` for Turn 2 (measure TTFT accurately)
+
+### Measured Metrics
+
+**Per-Request Metrics**:
+- **TTFT**: `time_first_token - request_start` (ms)
+- **TPOT**: `(e2e_latency - TTFT) / (output_tokens - 1)` (ms/token)
+- **E2E Latency**: `request_end - request_start` (ms)
+- **Throughput**: `output_tokens / e2e_latency` (tokens/s)
+
+**Aggregated Metrics** (across all requests at each QPS):
+- P50, P90, P99 TTFT
+- Average TTFT, TPOT, E2E
+- Success rate (% requests completing without timeout)
+- Real QPS achieved
+
+**Turn-Specific Metrics**:
+- Separate metrics for Turn 1 and Turn 2
+- Turn 2 TTFT is **critical metric** (shows prefix cache vs KV transfer difference)
+
+---
 
 ## Hardware Requirements
 
@@ -132,28 +286,7 @@ python scripts/plot_qps_curves.py results/merged_3mode_*.json
 
 ---
 
-## Workloads
-
-| Workload | Input Tokens | Output Tokens | Description |
-|----------|--------------|---------------|-------------|
-| **W1** | 512 | 256 | Chat balanced, latency sensitive |
-| **W2** | 4096 | 128 | RAG/retrieval, long input |
-| **W3** | 256 | 1024 | Agent style, long generation |
-| **W4** | 8192 | 64 | Extreme context stress test |
-
----
-
-## Metrics
-
-| Metric | Description |
-|--------|-------------|
-| **TTFT** | Time To First Token (request start → first decoded token) |
-| **TPOT** | Time Per Output Token = (E2E - TTFT) / (tokens - 1) |
-| **E2E** | End-to-End latency (total request time) |
-
----
-
-## Key Results
+## Benchmark Results
 
 ### PPD vs PD (Turn 2 TTFT Improvement)
 
