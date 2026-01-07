@@ -1,6 +1,8 @@
 # Results and logs - do not upload to GitHub
 # results/
 logs/
+docs/
+archive/
 
 # Python cache
 __pycache__/
