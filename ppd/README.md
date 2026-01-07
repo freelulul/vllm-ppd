@@ -86,19 +86,29 @@ Through comprehensive benchmarking, we identified the following performance char
 ```
 ppd/
 ├── src/
-│   ├── disagg_proxy_ppd.py      # PD/PPD proxy server
-│   ├── replication_proxy.py     # Replication proxy server
-│   ├── qps_benchmark.py         # PD vs PPD benchmark
-│   └── replication_benchmark.py # Replication benchmark
+│   ├── disagg_proxy_ppd.py         # PD/PPD proxy server (2-GPU)
+│   ├── disagg_proxy_ppd_4gpu.py    # PD/PPD proxy with cache affinity (4-GPU)
+│   ├── replication_proxy.py        # Replication proxy server (2-GPU)
+│   ├── replication_proxy_4gpu.py   # Replication proxy (4-GPU, N-worker)
+│   ├── qps_benchmark.py            # PD vs PPD benchmark
+│   └── replication_benchmark.py    # Replication benchmark
 ├── scripts/
-│   ├── start_servers.sh         # Start PD/PPD servers
-│   ├── stop_servers.sh          # Stop PD/PPD servers
-│   ├── start_replication_servers.sh
-│   ├── stop_replication_servers.sh
-│   ├── merge_results.py         # Merge benchmark results
-│   └── plot_qps_curves.py       # Generate plots
-├── results/                     # Benchmark results (JSON + PNG plots)
-└── logs/                        # Server logs
+│   ├── start_servers.sh            # Start PD/PPD servers (2-GPU)
+│   ├── stop_servers.sh             # Stop PD/PPD servers (2-GPU)
+│   ├── start_servers_4gpu.sh       # Start 2P+2D servers (4-GPU) ⭐ NEW
+│   ├── stop_servers_4gpu.sh        # Stop 4-GPU servers ⭐ NEW
+│   ├── start_replication_servers.sh      # Start replication (2-GPU)
+│   ├── stop_replication_servers.sh       # Stop replication (2-GPU)
+│   ├── start_replication_servers_4gpu.sh # Start 4 replicas (4-GPU) ⭐ NEW
+│   ├── stop_replication_servers_4gpu.sh  # Stop 4 replicas ⭐ NEW
+│   ├── test_4gpu.py                # Test script for 4-GPU setup ⭐ NEW
+│   ├── merge_results.py            # Merge benchmark results
+│   └── plot_qps_curves.py          # Generate plots
+├── docs/
+│   ├── 4GPU_Architecture_Explained.md  # Detailed 4-GPU architecture ⭐ NEW
+│   └── 4GPU_Complete_Summary.md        # Complete summary & comparison ⭐ NEW
+├── results/                        # Benchmark results (JSON + PNG plots)
+└── logs/                           # Server logs
 ```
 
 ---
@@ -186,8 +196,16 @@ base_text = (
 
 ## Hardware Requirements
 
+### 2-GPU Setup (Original Benchmarks)
 - 2x GPUs (tested on H100 80GB)
 - Model: Llama-3.1-8B at `/net/projects2/ds3lab/zongzel/models--meta-llama--Llama-3.1-8B`
+
+### 4-GPU Setup (New - For Dynamic Router)
+- 4x GPUs (tested on H100 80GB)
+- Same model
+- Supports:
+  - 2P+2D (2 Prefill + 2 Decode) with cache affinity
+  - 4 Replicas for baseline comparison
 
 ## Quick Start
 
@@ -200,7 +218,87 @@ cd /net/projects2/ds3lab/zongzel/vllm/ppd
 
 ---
 
-## 1. PD/PPD Benchmark
+## 🆕 4-GPU Setup (For Dynamic Router Development)
+
+See detailed documentation:
+- **Architecture Deep Dive**: `docs/4GPU_Architecture_Explained.md`
+- **Complete Summary**: `docs/4GPU_Complete_Summary.md`
+
+### Quick Test (2P+2D Mode)
+
+```bash
+# 1. Start 2P+2D (2 Prefill + 2 Decode)
+./scripts/start_servers_4gpu.sh ppd
+# Wait for "All 4-GPU servers ready!" message
+
+# 2. Test Turn 1 (PD flow with KV transfer)
+curl -s -w "\nTime: %{time_total}s\n" \
+  -X POST http://localhost:10001/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"/net/projects2/ds3lab/zongzel/models--meta-llama--Llama-3.1-8B",
+       "prompt":"User: Hello conv_123.\nAssistant:",
+       "max_tokens":30}'
+# Expected: ~4s (includes NCCL setup)
+
+# 3. Test Turn 2 (D-Direct with prefix cache)
+cat > /tmp/turn2.json << 'EOF'
+{"model":"/net/projects2/ds3lab/zongzel/models--meta-llama--Llama-3.1-8B",
+ "prompt":"User: Hello conv_123.\nAssistant: Hi!\nUser: Joke?\nAssistant:",
+ "max_tokens":50}
+EOF
+curl -s -w "\nTime: %{time_total}s\n" \
+  -X POST http://localhost:10001/v1/completions \
+  -H "Content-Type: application/json" \
+  -d @/tmp/turn2.json
+# Expected: ~0.4s (9.6x faster!)
+
+# 4. Check conversation state (verify cache affinity)
+curl -s http://localhost:10001/conversations | python3 -m json.tool
+
+# 5. Stop
+./scripts/stop_servers_4gpu.sh
+```
+
+### Quick Test (4 Replicas Mode)
+
+```bash
+# 1. Start 4 replicas
+./scripts/start_replication_servers_4gpu.sh
+
+# 2. Test
+python scripts/test_4gpu.py --mode replication --port 10002
+
+# 3. Check status
+curl -s http://localhost:10002/status | python3 -m json.tool
+
+# 4. Stop
+./scripts/stop_replication_servers_4gpu.sh
+```
+
+### Key Findings (4-GPU)
+
+**Architecture:**
+- P0 ↔ P1: ❌ NO communication (independent instances)
+- D0 ↔ D1: ❌ NO communication (independent instances)
+- Each instance: Complete Llama-3.1-8B model (data parallelism, NOT model parallelism)
+
+**Performance (PPD Mode with Cache Affinity):**
+- Turn 1: 4.13s (PD flow with KV transfer)
+- Turn 2: 0.43s (D-Direct using prefix cache)
+- **Speedup: 9.6x** 🚀
+
+**NCCL Groups:**
+- 4 total groups: P0↔D0, P0↔D1, P1↔D0, P1↔D1
+- Each group: world_size=2, created on-demand
+
+**Cache Affinity:**
+- Critical for PPD performance
+- Conversations pinned to specific D instance
+- Proxy tracks: `conversation_hash → decode_addr`
+
+---
+
+## 1. PD/PPD Benchmark (2-GPU)
 
 ### Start Servers
 
