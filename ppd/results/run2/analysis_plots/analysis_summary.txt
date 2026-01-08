@@ -1,0 +1,60 @@
+================================================================================
+BENCHMARK ANALYSIS SUMMARY REPORT
+Generated: 2026-01-07 22:22:40
+================================================================================
+
+## OVERALL STATISTICS
+
+Total experiments: 384
+Workloads: 16
+
+## PPD vs PD IMPROVEMENT (Turn 2 P99 TTFT)
+
+  L_b: +75.1% (PD=193.8ms → PPD=48.2ms)
+  XL_b: +74.0% (PD=249.0ms → PPD=64.8ms)
+  M_a: +73.9% (PD=159.2ms → PPD=41.5ms)
+  S_c: +72.1% (PD=149.5ms → PPD=41.7ms)
+  L_c: +69.3% (PD=173.7ms → PPD=53.3ms)
+  S_b: +69.1% (PD=128.9ms → PPD=39.8ms)
+  XL_a: +67.2% (PD=201.8ms → PPD=66.1ms)
+  M_c: +63.2% (PD=146.2ms → PPD=53.8ms)
+  L_a: +62.7% (PD=161.5ms → PPD=60.3ms)
+  M_b: +59.9% (PD=127.5ms → PPD=51.1ms)
+  M_d: +58.0% (PD=176.1ms → PPD=74.0ms)
+  L_d: +56.6% (PD=225.5ms → PPD=97.9ms)
+  S_d: +53.0% (PD=154.4ms → PPD=72.6ms)
+  XL_c: +51.8% (PD=197.6ms → PPD=95.3ms)
+  S_a: +50.4% (PD=116.3ms → PPD=57.7ms)
+  XL_d: +19.7% (PD=268.2ms → PPD=215.5ms)
+
+  Average improvement: 61.0%
+
+## PPD vs REPLICATION CROSSOVER POINTS
+
+  L_a: 0.05
+  L_b: 0.1
+  L_c: 0.1
+  L_d: 1.0
+  M_a: 0.05
+  M_b: 0.1
+  M_c: 0.05
+  M_d: 0.1
+  S_a: 0.1
+  S_b: 1.0
+  S_c: 0.05
+  S_d: 4.0
+  XL_a: 0.1
+  XL_b: 0.1
+  XL_c: 0.05
+  XL_d: >max
+
+## RECOMMENDATIONS BY SCENARIO
+
+  - Low QPS (<1.0): Replication (lowest overhead)
+  - Medium QPS (1.0-4.0): PPD (good balance)
+  - High QPS (>4.0): PPD (best TTFT under load)
+  - Large context (L/XL): PPD strongly preferred
+
+================================================================================
+END OF REPORT
+================================================================================
