@@ -171,6 +171,7 @@ base_text = (
 
 **Output Control**:
 - `max_tokens` parameter in API request
+- `ignore_eos`: True (prevents early termination, ensures precise output length)
 - Temperature: 0.8 (realistic diversity)
 - Streaming: `True` for Turn 2 (measure TTFT accurately)
 
@@ -237,14 +238,16 @@ curl -s -w "\nTime: %{time_total}s\n" \
   -H "Content-Type: application/json" \
   -d '{"model":"/net/projects2/ds3lab/zongzel/models--meta-llama--Llama-3.1-8B",
        "prompt":"User: Hello conv_123.\nAssistant:",
-       "max_tokens":30}'
+       "max_tokens":30,
+       "ignore_eos":true}'
 # Expected: ~4s (includes NCCL setup)
 
 # 3. Test Turn 2 (D-Direct with prefix cache)
 cat > /tmp/turn2.json << 'EOF'
 {"model":"/net/projects2/ds3lab/zongzel/models--meta-llama--Llama-3.1-8B",
  "prompt":"User: Hello conv_123.\nAssistant: Hi!\nUser: Joke?\nAssistant:",
- "max_tokens":50}
+ "max_tokens":50,
+ "ignore_eos":true}
 EOF
 curl -s -w "\nTime: %{time_total}s\n" \
   -X POST http://localhost:10001/v1/completions \
