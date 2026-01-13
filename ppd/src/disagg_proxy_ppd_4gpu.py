@@ -40,6 +40,16 @@ decode_cv = threading.Condition()
 conversation_state: dict[str, tuple[int, float, str | None, str | None]] = {}
 conversation_lock = threading.Lock()
 
+# Cache affinity statistics
+cache_affinity_stats = {
+    "total_requests": 0,
+    "turn1_requests": 0,
+    "turn2plus_requests": 0,
+    "cache_affinity_hits": 0,  # Turn 2+ routed to same D as Turn 1
+    "cache_affinity_misses": 0,  # Turn 2+ but conversation not found (expired)
+}
+stats_lock = threading.Lock()
+
 # Configuration
 ROUTING_MODE = "pd"  # "pd" or "ppd"
 DEFAULT_PING_SECONDS = 5
@@ -246,6 +256,19 @@ async def handle_request():
         # Update turn and record BOTH P and D instances for this conversation
         turn_number, _, _ = update_conversation_turn(conv_hash, prefill_addr, decode_addr)
 
+        # Track cache affinity statistics
+        with stats_lock:
+            cache_affinity_stats["total_requests"] += 1
+            if turn_number == 1:
+                cache_affinity_stats["turn1_requests"] += 1
+            else:
+                cache_affinity_stats["turn2plus_requests"] += 1
+                # Check if we successfully used cache affinity (assigned_decode was found)
+                if assigned_decode and assigned_decode in decode_instances:
+                    cache_affinity_stats["cache_affinity_hits"] += 1
+                else:
+                    cache_affinity_stats["cache_affinity_misses"] += 1
+
         # PPD mode: subsequent turns go directly to D
         use_d_direct = (ROUTING_MODE == "ppd" and turn_number > 1)
 
@@ -372,6 +395,37 @@ async def set_mode(new_mode):
 async def get_status():
     """Get proxy status (alias for /mode, for benchmark compatibility)."""
     return await get_mode()
+
+
+@app.route("/cache_stats", methods=["GET"])
+async def get_cache_stats():
+    """Get cache affinity statistics."""
+    with stats_lock:
+        stats = cache_affinity_stats.copy()
+
+    # Calculate hit rate
+    turn2plus = stats["turn2plus_requests"]
+    hits = stats["cache_affinity_hits"]
+    hit_rate = (hits / turn2plus * 100) if turn2plus > 0 else 0.0
+
+    stats["cache_affinity_hit_rate_pct"] = round(hit_rate, 2)
+    return stats
+
+
+@app.route("/cache_stats/reset", methods=["POST"])
+async def reset_cache_stats():
+    """Reset cache affinity statistics."""
+    global cache_affinity_stats
+    with stats_lock:
+        old_stats = cache_affinity_stats.copy()
+        cache_affinity_stats = {
+            "total_requests": 0,
+            "turn1_requests": 0,
+            "turn2plus_requests": 0,
+            "cache_affinity_hits": 0,
+            "cache_affinity_misses": 0,
+        }
+    return {"reset": True, "previous": old_stats}
 
 
 @app.route("/conversations", methods=["GET"])

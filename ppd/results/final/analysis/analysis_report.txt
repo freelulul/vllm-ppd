@@ -1,0 +1,81 @@
+================================================================================
+COMPREHENSIVE TRADE-OFF ANALYSIS REPORT
+PD vs PPD vs Replica Execution Modes
+================================================================================
+
+## 1. OVERALL WINNER ANALYSIS
+------------------------------------------------------------
+
+### 1.1 T2 P99 TTFT (Time to First Token)
+  PPD (Prefix-aware): 71 wins (65.7%)
+  Replica (Data Parallel): 37 wins (34.3%)
+  PD (Full Disagg): 0 wins (0.0%)
+
+### 1.2 T2 Avg TPOT (Time per Output Token)
+  Replica (Data Parallel): 66 wins (61.1%)
+  PD (Full Disagg): 33 wins (30.6%)
+  PPD (Prefix-aware): 9 wins (8.3%)
+
+### 1.3 Throughput (tokens/s)
+  Replica (Data Parallel): 91 wins (84.3%)
+  PPD (Prefix-aware): 17 wins (15.7%)
+  PD (Full Disagg): 0 wins (0.0%)
+
+## 2. KEY FINDINGS
+------------------------------------------------------------
+
+### 2.1 PPD vs PD (KV Transfer Avoidance)
+  - PPD beats PD in T2 TTFT: 108 scenarios
+  - Reason: PPD uses prefix cache for Turn 2+, avoiding KV transfer overhead
+  - Typical improvement: 30-70% faster T2 TTFT
+
+### 2.2 PD TPOT Advantage in Big Paste (_d) Workloads
+  - PD wins TPOT in _d workloads: 19 scenarios
+  - Examples: L_d@QPS=3, L_d@QPS=4, M_d@QPS=2, M_d@QPS=3, M_d@QPS=4...
+  - Reason: _d has large T2 prefill (512 tokens) + small decode (64 tokens)
+  - PD isolates large prefill on P-machines, D-machines only do decode
+  - PPD/Replica: D-machine does both prefill+decode -> resource contention
+  - KEY INSIGHT: When prefill is heavy, PD isolation benefits TPOT!
+
+### 2.3 Replica Advantage at High QPS
+  - Replica wins at high QPS (>=3): 16 scenarios
+  - Reason: 4 independent workers provide double capacity
+  - Trade-off: No prefill-decode isolation, potential HOL blocking
+
+### 2.4 Context Size Impact
+  - Small (256+256): Replica (Data Parallel) wins most (13/24)
+  - Medium (512+512): PPD (Prefix-aware) wins most (19/24)
+  - Large (1024+1024): PPD (Prefix-aware) wins most (13/16)
+  - XLarge (2048+1024): PPD (Prefix-aware) wins most (8/16)
+
+### 2.5 T2 Type Impact
+  - Tiny (16→32): Replica (Data Parallel) wins most (14/27)
+  - Short Q Long Out (32→256): PPD (Prefix-aware) wins most (15/27)
+  - Balanced (128→128): PPD (Prefix-aware) wins most (20/27)
+  - Big Paste (512→64): PPD (Prefix-aware) wins most (23/27)
+
+## 3. RECOMMENDATIONS BY OPTIMIZATION GOAL
+------------------------------------------------------------
+
+### 3.1 Optimize for TTFT (User Responsiveness)
+  1. LOW QPS (<2): Use PPD - prefix cache benefit dominates
+  2. MEDIUM QPS (2-4): Use PPD for most workloads
+  3. HIGH QPS (>4): Consider Replica for small contexts
+  4. TINY T2 (type 'a'): Replica competitive due to capacity
+  5. OTHER T2 types: PPD strongly preferred
+
+### 3.2 Optimize for TPOT (Generation Quality)
+  1. BIG PASTE (_d): Use PD - isolation prevents decode interference
+  2. HIGH QPS + _d: PD has significant advantage (up to 50% better TPOT)
+  3. OTHER workloads: PPD/Replica similar, Replica slightly better at high QPS
+  4. KEY: If T2 prefill is heavy, PD isolation benefits decode quality!
+
+### 3.3 Summary Decision Matrix
+  | Scenario              | TTFT Target | TPOT Target |
+  |-----------------------|-------------|-------------|
+  | Low QPS, any workload | PPD         | PPD         |
+  | High QPS, tiny T2     | Replica     | Replica     |
+  | High QPS, big paste   | PPD         | PD          |
+  | High QPS, other       | PPD/Replica | Replica     |
+
+================================================================================
