@@ -45,7 +45,7 @@ async def restart_servers():
 
     # Stop servers
     subprocess.run(
-        ["bash", "scripts/stop_servers_4gpu.sh"],
+        ["bash", "scripts/server/stop_servers_4gpu.sh"],
         capture_output=True,
         cwd="/net/projects2/ds3lab/zongzel/vllm/ppd"
     )
@@ -53,7 +53,7 @@ async def restart_servers():
 
     # Start servers in PD mode
     subprocess.run(
-        ["bash", "scripts/start_servers_4gpu.sh", "ppd"],
+        ["bash", "scripts/server/start_servers_4gpu.sh", "ppd"],
         capture_output=True,
         cwd="/net/projects2/ds3lab/zongzel/vllm/ppd"
     )

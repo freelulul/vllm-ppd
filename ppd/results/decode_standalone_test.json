@@ -1,0 +1,26 @@
+{
+  "decode_short": {
+    "success": false,
+    "error": "HTTP 404: {\"error\":{\"message\":\"The model `default` does not exist.\",\"type\":\"NotFoundError\",\"param\":null,\"code\":404}}",
+    "ttft_ms": 11.298112571239471,
+    "e2e_ms": 11.298112571239471,
+    "output_tokens": 0,
+    "response": ""
+  },
+  "decode_medium": {
+    "success": false,
+    "error": "HTTP 404: {\"error\":{\"message\":\"The model `default` does not exist.\",\"type\":\"NotFoundError\",\"param\":null,\"code\":404}}",
+    "ttft_ms": 6.651498377323151,
+    "e2e_ms": 6.651498377323151,
+    "output_tokens": 0,
+    "response": ""
+  },
+  "prefill_short": {
+    "success": false,
+    "error": "HTTP 404: {\"error\":{\"message\":\"The model `default` does not exist.\",\"type\":\"NotFoundError\",\"param\":null,\"code\":404}}",
+    "ttft_ms": 10.52994653582573,
+    "e2e_ms": 10.52994653582573,
+    "output_tokens": 0,
+    "response": ""
+  }
+}

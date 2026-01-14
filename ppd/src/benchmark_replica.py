@@ -561,11 +561,11 @@ async def main():
             async with session.get(f"{PROXY_URL}/status") as resp:
                 if resp.status != 200:
                     print("ERROR: Replica proxy not available at port 10002")
-                    print("Please start replica servers with: scripts/start_replication_servers_4gpu.sh")
+                    print("Please start replica servers with: scripts/server/start_replication_servers_4gpu.sh")
                     return
     except Exception as e:
         print(f"ERROR: Cannot connect to replica proxy: {e}")
-        print("Please start replica servers with: scripts/start_replication_servers_4gpu.sh")
+        print("Please start replica servers with: scripts/server/start_replication_servers_4gpu.sh")
         return
 
     # Determine workloads

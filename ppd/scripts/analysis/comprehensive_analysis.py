@@ -9,7 +9,7 @@ the trade-offs between three execution modes:
 - Replica: Data parallelism (same worker for all turns, uses prefix cache)
 
 Usage:
-    python scripts/comprehensive_analysis.py [--input results/final/merged_results.json]
+    python scripts/analysis/comprehensive_analysis.py [--input results/final/merged_results.json]
 """
 
 import argparse

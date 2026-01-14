@@ -35,7 +35,7 @@ fi
 MODE="${1:-ppd}"
 
 SCRIPT_DIR="$(dirname "$0")"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 # Configuration
 MODEL_PATH="/net/projects2/ds3lab/zongzel/models--meta-llama--Llama-3.1-8B"
@@ -177,5 +177,5 @@ echo "  Request 2: P1 → D1"
 echo "  Request 3: P0 → D0"
 echo "  ..."
 echo ""
-echo "To stop: ./scripts/stop_servers_4gpu.sh"
+echo "To stop: ./scripts/server/stop_servers_4gpu.sh"
 echo "=============================================="

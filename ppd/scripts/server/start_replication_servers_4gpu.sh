@@ -30,7 +30,7 @@ if ! python -c "import quart" 2>/dev/null; then
 fi
 
 SCRIPT_DIR="$(dirname "$0")"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 # Configuration
 MODEL_PATH="/net/projects2/ds3lab/zongzel/models--meta-llama--Llama-3.1-8B"
@@ -141,5 +141,5 @@ echo "Worker 1: http://localhost:$WORKER1_PORT (GPU 1)"
 echo "Worker 2: http://localhost:$WORKER2_PORT (GPU 2)"
 echo "Worker 3: http://localhost:$WORKER3_PORT (GPU 3)"
 echo ""
-echo "To stop: ./scripts/stop_replication_servers_4gpu.sh"
+echo "To stop: ./scripts/server/stop_replication_servers_4gpu.sh"
 echo "=============================================="

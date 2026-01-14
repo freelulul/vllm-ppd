@@ -1,0 +1,47 @@
+{
+  "total_samples": 432,
+  "unique_workloads": 20,
+  "unique_qps": [
+    0.5,
+    1.0,
+    1.5,
+    2.0,
+    3.0,
+    4.0,
+    5.0,
+    6.0,
+    8.0,
+    10.0,
+    12.0
+  ],
+  "objectives": [
+    "ttft",
+    "tpot",
+    "throughput",
+    "e2e"
+  ],
+  "mode_distribution": {
+    "replica": 291,
+    "ppd": 108,
+    "pd": 33
+  },
+  "mode_by_objective": {
+    "ttft": {
+      "ppd": 58,
+      "replica": 50
+    },
+    "tpot": {
+      "replica": 66,
+      "pd": 33,
+      "ppd": 9
+    },
+    "throughput": {
+      "replica": 91,
+      "ppd": 17
+    },
+    "e2e": {
+      "replica": 84,
+      "ppd": 24
+    }
+  }
+}

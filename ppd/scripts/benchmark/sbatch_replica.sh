@@ -9,8 +9,8 @@
 #SBATCH --mem=500G
 #SBATCH --cpus-per-task=16
 
-# Usage: sbatch --array=1-3 scripts/sbatch_replica.sh
-# Or: sbatch scripts/sbatch_replica.sh 1  (for single run)
+# Usage: sbatch --array=1-3 scripts/benchmark/sbatch_replica.sh
+# Or: sbatch scripts/benchmark/sbatch_replica.sh 1  (for single run)
 
 set -e
 
@@ -38,7 +38,7 @@ mkdir -p logs results/replica
 
 # Start replica servers
 echo "Starting Replica servers..."
-./scripts/start_replication_servers_4gpu.sh
+./scripts/server/start_replication_servers_4gpu.sh
 sleep 60  # Initial wait, then retry loop checks readiness
 
 # Check proxy (replica uses port 10002)
@@ -72,6 +72,6 @@ echo "=============================================="
 
 # Stop servers
 echo "Stopping servers..."
-./scripts/stop_replication_servers_4gpu.sh || true
+./scripts/server/stop_replication_servers_4gpu.sh || true
 
 echo "Done at $(date)"

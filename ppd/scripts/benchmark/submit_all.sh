@@ -4,9 +4,9 @@
 # =============================================================================
 #
 # Usage:
-#   ./scripts/submit_all.sh           # Submit runs 1,2,3 for all modes
-#   ./scripts/submit_all.sh 1         # Submit only run 1
-#   ./scripts/submit_all.sh 1 2       # Submit runs 1 and 2
+#   ./scripts/benchmark/submit_all.sh           # Submit runs 1,2,3 for all modes
+#   ./scripts/benchmark/submit_all.sh 1         # Submit only run 1
+#   ./scripts/benchmark/submit_all.sh 1 2       # Submit runs 1 and 2
 #
 # Jobs are chained with dependencies to avoid GPU conflicts on n001
 # Order: PPD -> PD -> Replica (for each run)
@@ -49,20 +49,20 @@ for RUN in ${RUNS}; do
 
     # Submit PPD (depends on previous run if exists)
     if [ -z "$LAST_JOB" ]; then
-        PPD_JOB=$(sbatch --parsable scripts/sbatch_ppd.sh ${RUN})
+        PPD_JOB=$(sbatch --parsable scripts/benchmark/sbatch_ppd.sh ${RUN})
     else
-        PPD_JOB=$(sbatch --parsable --dependency=afterany:${LAST_JOB} scripts/sbatch_ppd.sh ${RUN})
+        PPD_JOB=$(sbatch --parsable --dependency=afterany:${LAST_JOB} scripts/benchmark/sbatch_ppd.sh ${RUN})
     fi
     echo "  [1/3] PPD:     Job ${PPD_JOB}"
     TOTAL_JOBS=$((TOTAL_JOBS + 1))
 
     # Submit PD (depends on PPD)
-    PD_JOB=$(sbatch --parsable --dependency=afterany:${PPD_JOB} scripts/sbatch_pd.sh ${RUN})
+    PD_JOB=$(sbatch --parsable --dependency=afterany:${PPD_JOB} scripts/benchmark/sbatch_pd.sh ${RUN})
     echo "  [2/3] PD:      Job ${PD_JOB} (after PPD)"
     TOTAL_JOBS=$((TOTAL_JOBS + 1))
 
     # Submit Replica (depends on PD)
-    REP_JOB=$(sbatch --parsable --dependency=afterany:${PD_JOB} scripts/sbatch_replica.sh ${RUN})
+    REP_JOB=$(sbatch --parsable --dependency=afterany:${PD_JOB} scripts/benchmark/sbatch_replica.sh ${RUN})
     echo "  [3/3] Replica: Job ${REP_JOB} (after PD)"
     TOTAL_JOBS=$((TOTAL_JOBS + 1))
 
@@ -81,8 +81,8 @@ echo "  tail -f logs/bench_pd_*.out        # View PD logs"
 echo "  tail -f logs/bench_replica_*.out   # View Replica logs"
 echo ""
 echo "After all jobs complete:"
-echo "  python scripts/merge_results.py    # Merge all results"
-echo "  python scripts/plot_results.py     # Generate plots"
+echo "  python scripts/analysis/merge_results.py    # Merge all results"
+echo "  python scripts/analysis/plot_trend_figures.py     # Generate plots"
 echo ""
 echo "Output files:"
 echo "  results/ppd/ppd_run*_*.json"

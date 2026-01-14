@@ -3,7 +3,7 @@
 Merge benchmark results from multiple runs and compute averages.
 
 Usage:
-    python scripts/merge_results.py [--input-dir results] [--output merged_results.json]
+    python scripts/analysis/merge_results.py [--input-dir results] [--output merged_results.json]
 """
 
 import argparse
