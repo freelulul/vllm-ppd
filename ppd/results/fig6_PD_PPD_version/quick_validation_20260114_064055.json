@@ -1,0 +1,55 @@
+{
+  "panel": "B",
+  "x_value": 4,
+  "test_duration": 10,
+  "qps": 4,
+  "objective_dist": {
+    "ttft": 0.33,
+    "tpot": 0.34,
+    "e2e": 0.33
+  },
+  "turn_configs": [
+    {
+      "input": 512,
+      "output": 256
+    },
+    {
+      "input": 128,
+      "output": 128
+    }
+  ],
+  "results": {
+    "pd": {
+      "slo_attainment": {
+        "overall": 0,
+        "by_objective": {},
+        "total_turns": 66,
+        "successful_turns": 0
+      },
+      "latency_stats": {},
+      "routing_stats": {},
+      "num_conversations": 33,
+      "num_turns": 66
+    },
+    "ppd": {
+      "slo_attainment": {
+        "overall": 0,
+        "by_objective": {},
+        "total_turns": 66,
+        "successful_turns": 0
+      },
+      "latency_stats": {},
+      "routing_stats": {},
+      "num_conversations": 33,
+      "num_turns": 66
+    },
+    "replica": {
+      "error": "Servers not responding"
+    },
+    "optimizer": {
+      "error": "Servers not responding"
+    }
+  },
+  "best_mode": "pd",
+  "timestamp": "2026-01-14T06:40:55.714324"
+}

@@ -1,0 +1,115 @@
+{
+  "panel": "B",
+  "x_value": 4,
+  "test_duration": 10,
+  "qps": 4,
+  "objective_dist": {
+    "ttft": 0.33,
+    "tpot": 0.34,
+    "e2e": 0.33
+  },
+  "turn_configs": [
+    {
+      "input": 512,
+      "output": 256
+    },
+    {
+      "input": 128,
+      "output": 128
+    }
+  ],
+  "results": {
+    "pd": {
+      "slo_attainment": {
+        "overall": 0.0,
+        "by_objective": {
+          "ttft": {
+            "met": 0,
+            "total": 2
+          }
+        },
+        "total_turns": 36,
+        "successful_turns": 2
+      },
+      "latency_stats": {
+        "avg_ttft_ms": 3160.807728767395,
+        "avg_tpot_ms": 7.603150933764683,
+        "avg_e2e_ms": 4635.449269786477,
+        "p50_ttft_ms": 3178.194750100374,
+        "p99_ttft_ms": 3178.194750100374,
+        "p50_tpot_ms": 7.941628714986876,
+        "p99_tpot_ms": 7.941628714986876,
+        "p50_e2e_ms": 5169.408489018679,
+        "p99_e2e_ms": 5169.408489018679
+      },
+      "routing_stats": {},
+      "num_conversations": 18,
+      "num_turns": 36
+    },
+    "ppd": {
+      "slo_attainment": {
+        "overall": 0.0,
+        "by_objective": {
+          "ttft": {
+            "met": 0,
+            "total": 2
+          }
+        },
+        "total_turns": 40,
+        "successful_turns": 2
+      },
+      "latency_stats": {
+        "avg_ttft_ms": 3376.923916861415,
+        "avg_tpot_ms": 7.488551457329574,
+        "avg_e2e_ms": 4790.075501427054,
+        "p50_ttft_ms": 3525.8602052927017,
+        "p99_ttft_ms": 3525.8602052927017,
+        "p50_tpot_ms": 7.768827923170225,
+        "p99_tpot_ms": 7.768827923170225,
+        "p50_e2e_ms": 5364.678930491209,
+        "p99_e2e_ms": 5364.678930491209
+      },
+      "routing_stats": {},
+      "num_conversations": 20,
+      "num_turns": 40
+    },
+    "replica": {
+      "error": "Servers not responding"
+    },
+    "optimizer": {
+      "slo_attainment": {
+        "overall": 33.33333333333333,
+        "by_objective": {
+          "ttft": {
+            "met": 0,
+            "total": 4
+          },
+          "tpot": {
+            "met": 2,
+            "total": 2
+          }
+        },
+        "total_turns": 6,
+        "successful_turns": 6
+      },
+      "latency_stats": {
+        "avg_ttft_ms": 628.4597857544819,
+        "avg_tpot_ms": 7.195643996896063,
+        "avg_e2e_ms": 2004.3917422493298,
+        "p50_ttft_ms": 120.93919143080711,
+        "p99_ttft_ms": 3190.5728317797184,
+        "p50_tpot_ms": 7.192704125362284,
+        "p99_tpot_ms": 7.232727738572102,
+        "p50_e2e_ms": 1955.7642564177513,
+        "p99_e2e_ms": 5035.719159990549
+      },
+      "routing_stats": {
+        "ppd": 6
+      },
+      "num_conversations": 3,
+      "num_turns": 6
+    }
+  },
+  "best_mode": "optimizer",
+  "timestamp": "2026-01-14T06:59:47.561608"
+}

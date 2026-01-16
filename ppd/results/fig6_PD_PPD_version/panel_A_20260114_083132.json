@@ -1,0 +1,581 @@
+{
+  "panel": "A",
+  "name": "Objective Type Comparison",
+  "x_axis": "objective_type",
+  "data_points": [
+    {
+      "x_value": "Pure_TTFT",
+      "qps": 8,
+      "objective_dist": {
+        "ttft": 1.0,
+        "tpot": 0.0,
+        "e2e": 0.0
+      },
+      "turn_configs": [
+        {
+          "input": 512,
+          "output": 256
+        },
+        {
+          "input": 128,
+          "output": 128
+        }
+      ],
+      "modes": {
+        "pd": {
+          "slo_attainment": {
+            "overall": 0.0,
+            "by_objective": {
+              "ttft": {
+                "met": 0,
+                "total": 16
+              }
+            },
+            "total_turns": 16,
+            "successful_turns": 16
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 499.16010559536517,
+            "avg_tpot_ms": 7.729258743404216,
+            "avg_e2e_ms": 1974.0033133421093,
+            "p50_ttft_ms": 127.39883735775948,
+            "p99_ttft_ms": 3119.640324264765,
+            "p50_tpot_ms": 7.763638623117462,
+            "p99_tpot_ms": 7.822643818817739,
+            "p50_e2e_ms": 2097.172923386097,
+            "p99_e2e_ms": 4971.672464162111
+          },
+          "routing_stats": {},
+          "num_conversations": 8,
+          "num_turns": 16
+        },
+        "ppd": {
+          "slo_attainment": {
+            "overall": 6.25,
+            "by_objective": {
+              "ttft": {
+                "met": 1,
+                "total": 16
+              }
+            },
+            "total_turns": 16,
+            "successful_turns": 16
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 502.02602380886674,
+            "avg_tpot_ms": 7.812437234847291,
+            "avg_e2e_ms": 1993.6107818502933,
+            "p50_ttft_ms": 135.66646352410316,
+            "p99_ttft_ms": 3279.4655337929726,
+            "p50_tpot_ms": 7.801715708246418,
+            "p99_tpot_ms": 7.91102791513045,
+            "p50_e2e_ms": 2100.9152606129646,
+            "p99_e2e_ms": 5292.428590357304
+          },
+          "routing_stats": {},
+          "num_conversations": 8,
+          "num_turns": 16
+        },
+        "optimizer": {
+          "slo_attainment": {
+            "overall": 38.88888888888889,
+            "by_objective": {
+              "ttft": {
+                "met": 7,
+                "total": 18
+              }
+            },
+            "total_turns": 18,
+            "successful_turns": 18
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 276.8340797887908,
+            "avg_tpot_ms": 7.44192037701565,
+            "avg_e2e_ms": 1697.6233913252752,
+            "p50_ttft_ms": 113.16974088549614,
+            "p99_ttft_ms": 3132.1420557796955,
+            "p50_tpot_ms": 7.527743150868754,
+            "p99_tpot_ms": 7.803298474296811,
+            "p50_e2e_ms": 1922.628503292799,
+            "p99_e2e_ms": 4967.549689114094
+          },
+          "routing_stats": {
+            "ppd": 18
+          },
+          "num_conversations": 9,
+          "num_turns": 18
+        }
+      },
+      "best_mode": "optimizer",
+      "best_slo": 38.88888888888889
+    },
+    {
+      "x_value": "Pure_TPOT",
+      "qps": 8,
+      "objective_dist": {
+        "ttft": 0.0,
+        "tpot": 1.0,
+        "e2e": 0.0
+      },
+      "turn_configs": [
+        {
+          "input": 512,
+          "output": 256
+        },
+        {
+          "input": 128,
+          "output": 128
+        }
+      ],
+      "modes": {
+        "pd": {
+          "slo_attainment": {
+            "overall": 100.0,
+            "by_objective": {
+              "tpot": {
+                "met": 16,
+                "total": 16
+              }
+            },
+            "total_turns": 16,
+            "successful_turns": 16
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 518.296369118616,
+            "avg_tpot_ms": 7.7636308992367535,
+            "avg_e2e_ms": 1999.3578095454723,
+            "p50_ttft_ms": 134.65801626443863,
+            "p99_ttft_ms": 3540.0992147624493,
+            "p50_tpot_ms": 7.789703071352065,
+            "p99_tpot_ms": 7.908321506395115,
+            "p50_e2e_ms": 2108.5260584950447,
+            "p99_e2e_ms": 5376.307561993599
+          },
+          "routing_stats": {},
+          "num_conversations": 8,
+          "num_turns": 16
+        },
+        "ppd": {
+          "slo_attainment": {
+            "overall": 100.0,
+            "by_objective": {
+              "tpot": {
+                "met": 16,
+                "total": 16
+              }
+            },
+            "total_turns": 16,
+            "successful_turns": 16
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 494.9130299501121,
+            "avg_tpot_ms": 7.782022444121809,
+            "avg_e2e_ms": 1979.4771436136216,
+            "p50_ttft_ms": 125.03401190042496,
+            "p99_ttft_ms": 3167.7136719226837,
+            "p50_tpot_ms": 7.79505228879405,
+            "p99_tpot_ms": 7.888185285677121,
+            "p50_e2e_ms": 2084.841277450323,
+            "p99_e2e_ms": 5027.681395411491
+          },
+          "routing_stats": {},
+          "num_conversations": 8,
+          "num_turns": 16
+        },
+        "optimizer": {
+          "slo_attainment": {
+            "overall": 100.0,
+            "by_objective": {
+              "tpot": {
+                "met": 18,
+                "total": 18
+              }
+            },
+            "total_turns": 18,
+            "successful_turns": 18
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 272.45431890090305,
+            "avg_tpot_ms": 7.350505848999922,
+            "avg_e2e_ms": 1676.104293929206,
+            "p50_ttft_ms": 103.6728136241436,
+            "p99_ttft_ms": 3165.480352938175,
+            "p50_tpot_ms": 7.234204941847193,
+            "p99_tpot_ms": 7.7461450118718185,
+            "p50_e2e_ms": 1932.706143707037,
+            "p99_e2e_ms": 5008.422736078501
+          },
+          "routing_stats": {
+            "ppd": 18
+          },
+          "num_conversations": 9,
+          "num_turns": 18
+        }
+      },
+      "best_mode": "pd",
+      "best_slo": 100.0
+    },
+    {
+      "x_value": "Pure_E2E",
+      "qps": 8,
+      "objective_dist": {
+        "ttft": 0.0,
+        "tpot": 0.0,
+        "e2e": 1.0
+      },
+      "turn_configs": [
+        {
+          "input": 512,
+          "output": 256
+        },
+        {
+          "input": 128,
+          "output": 128
+        }
+      ],
+      "modes": {
+        "pd": {
+          "slo_attainment": {
+            "overall": 0.0,
+            "by_objective": {
+              "e2e": {
+                "met": 0,
+                "total": 16
+              }
+            },
+            "total_turns": 16,
+            "successful_turns": 16
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 502.5472855195403,
+            "avg_tpot_ms": 7.5984615031301965,
+            "avg_e2e_ms": 1939.8370531853288,
+            "p50_ttft_ms": 129.03325632214546,
+            "p99_ttft_ms": 3206.7197412252426,
+            "p50_tpot_ms": 7.791302423542879,
+            "p99_tpot_ms": 7.8628419304457235,
+            "p50_e2e_ms": 1966.8660573661327,
+            "p99_e2e_ms": 5119.859304279089
+          },
+          "routing_stats": {},
+          "num_conversations": 8,
+          "num_turns": 16
+        },
+        "ppd": {
+          "slo_attainment": {
+            "overall": 0.0,
+            "by_objective": {
+              "e2e": {
+                "met": 0,
+                "total": 16
+              }
+            },
+            "total_turns": 16,
+            "successful_turns": 16
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 504.1267145425081,
+            "avg_tpot_ms": 7.812922553518626,
+            "avg_e2e_ms": 1996.7744541354477,
+            "p50_ttft_ms": 129.7863833606243,
+            "p99_ttft_ms": 3152.0024053752422,
+            "p50_tpot_ms": 7.820084955044619,
+            "p99_tpot_ms": 7.892453383038363,
+            "p50_e2e_ms": 2109.414979815483,
+            "p99_e2e_ms": 5063.46820294857
+          },
+          "routing_stats": {},
+          "num_conversations": 8,
+          "num_turns": 16
+        },
+        "optimizer": {
+          "slo_attainment": {
+            "overall": 0.0,
+            "by_objective": {
+              "e2e": {
+                "met": 0,
+                "total": 18
+              }
+            },
+            "total_turns": 18,
+            "successful_turns": 18
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 284.6740347643693,
+            "avg_tpot_ms": 7.716730424195102,
+            "avg_e2e_ms": 1757.9387430515553,
+            "p50_ttft_ms": 117.1611100435257,
+            "p99_ttft_ms": 3125.4181414842606,
+            "p50_tpot_ms": 7.752532658039355,
+            "p99_tpot_ms": 7.870079846832696,
+            "p50_e2e_ms": 2059.7441866993904,
+            "p99_e2e_ms": 4964.680999517441
+          },
+          "routing_stats": {
+            "ppd": 18
+          },
+          "num_conversations": 9,
+          "num_turns": 18
+        }
+      },
+      "best_mode": "pd",
+      "best_slo": 0.0
+    },
+    {
+      "x_value": "Mixed_Balanced",
+      "qps": 8,
+      "objective_dist": {
+        "ttft": 0.33,
+        "tpot": 0.34,
+        "e2e": 0.33
+      },
+      "turn_configs": [
+        {
+          "input": 512,
+          "output": 256
+        },
+        {
+          "input": 128,
+          "output": 128
+        }
+      ],
+      "modes": {
+        "pd": {
+          "slo_attainment": {
+            "overall": 25.0,
+            "by_objective": {
+              "e2e": {
+                "met": 0,
+                "total": 4
+              },
+              "tpot": {
+                "met": 4,
+                "total": 4
+              },
+              "ttft": {
+                "met": 0,
+                "total": 8
+              }
+            },
+            "total_turns": 16,
+            "successful_turns": 16
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 513.2217658683658,
+            "avg_tpot_ms": 7.7666294732100445,
+            "avg_e2e_ms": 1996.3461854495108,
+            "p50_ttft_ms": 130.78147545456886,
+            "p99_ttft_ms": 3217.8594283759594,
+            "p50_tpot_ms": 7.7883094607845065,
+            "p99_tpot_ms": 7.839855305322512,
+            "p50_e2e_ms": 2114.655237644911,
+            "p99_e2e_ms": 5124.794851988554
+          },
+          "routing_stats": {},
+          "num_conversations": 8,
+          "num_turns": 16
+        },
+        "ppd": {
+          "slo_attainment": {
+            "overall": 43.75,
+            "by_objective": {
+              "tpot": {
+                "met": 6,
+                "total": 6
+              },
+              "ttft": {
+                "met": 1,
+                "total": 6
+              },
+              "e2e": {
+                "met": 0,
+                "total": 4
+              }
+            },
+            "total_turns": 16,
+            "successful_turns": 16
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 498.46179015003145,
+            "avg_tpot_ms": 7.478655445452867,
+            "avg_e2e_ms": 1941.727910656482,
+            "p50_ttft_ms": 117.07190796732903,
+            "p99_ttft_ms": 3311.796847730875,
+            "p50_tpot_ms": 7.5280381183998255,
+            "p99_tpot_ms": 7.768989792641471,
+            "p50_e2e_ms": 2057.210873812437,
+            "p99_e2e_ms": 5231.615584343672
+          },
+          "routing_stats": {},
+          "num_conversations": 8,
+          "num_turns": 16
+        },
+        "optimizer": {
+          "slo_attainment": {
+            "overall": 33.33333333333333,
+            "by_objective": {
+              "ttft": {
+                "met": 0,
+                "total": 6
+              },
+              "tpot": {
+                "met": 6,
+                "total": 6
+              },
+              "e2e": {
+                "met": 0,
+                "total": 6
+              }
+            },
+            "total_turns": 18,
+            "successful_turns": 18
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 289.662454277277,
+            "avg_tpot_ms": 7.767274537948179,
+            "avg_e2e_ms": 1773.0874568223953,
+            "p50_ttft_ms": 120.59353291988373,
+            "p99_ttft_ms": 3186.3688118755817,
+            "p50_tpot_ms": 7.7751021028733724,
+            "p99_tpot_ms": 7.8354699933153436,
+            "p50_e2e_ms": 2090.504813939333,
+            "p99_e2e_ms": 5169.79792714119
+          },
+          "routing_stats": {
+            "ppd": 18
+          },
+          "num_conversations": 9,
+          "num_turns": 18
+        }
+      },
+      "best_mode": "ppd",
+      "best_slo": 43.75
+    },
+    {
+      "x_value": "Mixed_TPOT_Heavy",
+      "qps": 8,
+      "objective_dist": {
+        "ttft": 0.25,
+        "tpot": 0.5,
+        "e2e": 0.25
+      },
+      "turn_configs": [
+        {
+          "input": 512,
+          "output": 256
+        },
+        {
+          "input": 128,
+          "output": 128
+        }
+      ],
+      "modes": {
+        "pd": {
+          "slo_attainment": {
+            "overall": 75.0,
+            "by_objective": {
+              "tpot": {
+                "met": 12,
+                "total": 12
+              },
+              "ttft": {
+                "met": 0,
+                "total": 2
+              },
+              "e2e": {
+                "met": 0,
+                "total": 2
+              }
+            },
+            "total_turns": 16,
+            "successful_turns": 16
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 494.5577294565737,
+            "avg_tpot_ms": 7.789021621632074,
+            "avg_e2e_ms": 1983.9498053770512,
+            "p50_ttft_ms": 127.78932601213455,
+            "p99_ttft_ms": 3155.7320952415466,
+            "p50_tpot_ms": 7.807558555813396,
+            "p99_tpot_ms": 7.867604083432926,
+            "p50_e2e_ms": 2107.727374881506,
+            "p99_e2e_ms": 5125.028885900974
+          },
+          "routing_stats": {},
+          "num_conversations": 8,
+          "num_turns": 16
+        },
+        "ppd": {
+          "slo_attainment": {
+            "overall": 56.25,
+            "by_objective": {
+              "e2e": {
+                "met": 0,
+                "total": 2
+              },
+              "tpot": {
+                "met": 8,
+                "total": 8
+              },
+              "ttft": {
+                "met": 1,
+                "total": 6
+              }
+            },
+            "total_turns": 16,
+            "successful_turns": 16
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 493.17495012655854,
+            "avg_tpot_ms": 7.5051855473188605,
+            "avg_e2e_ms": 1913.7362469919026,
+            "p50_ttft_ms": 122.13980033993721,
+            "p99_ttft_ms": 3163.2363721728325,
+            "p50_tpot_ms": 7.7525172822588075,
+            "p99_tpot_ms": 7.811641892579597,
+            "p50_e2e_ms": 1942.9195411503315,
+            "p99_e2e_ms": 4894.201245158911
+          },
+          "routing_stats": {},
+          "num_conversations": 8,
+          "num_turns": 16
+        },
+        "optimizer": {
+          "slo_attainment": {
+            "overall": 44.44444444444444,
+            "by_objective": {
+              "tpot": {
+                "met": 8,
+                "total": 8
+              },
+              "ttft": {
+                "met": 0,
+                "total": 10
+              }
+            },
+            "total_turns": 18,
+            "successful_turns": 18
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 290.3605196624994,
+            "avg_tpot_ms": 7.70346539854986,
+            "avg_e2e_ms": 1761.5365725424554,
+            "p50_ttft_ms": 121.27405405044556,
+            "p99_ttft_ms": 3201.296206563711,
+            "p50_tpot_ms": 7.733615181025336,
+            "p99_tpot_ms": 7.786018284512501,
+            "p50_e2e_ms": 2055.9027418494225,
+            "p99_e2e_ms": 5180.467490106821
+          },
+          "routing_stats": {
+            "ppd": 18
+          },
+          "num_conversations": 9,
+          "num_turns": 18
+        }
+      },
+      "best_mode": "pd",
+      "best_slo": 75.0
+    }
+  ]
+}

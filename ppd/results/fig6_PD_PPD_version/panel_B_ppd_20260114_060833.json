@@ -1,0 +1,198 @@
+{
+  "ppd": {
+    "B": {
+      "panel": "B",
+      "mode": "ppd",
+      "results": [
+        {
+          "x_value": 1,
+          "slo_attainment": {
+            "overall": 50.0,
+            "by_objective": {
+              "e2e": {
+                "met": 0,
+                "total": 2
+              },
+              "tpot": {
+                "met": 4,
+                "total": 4
+              },
+              "ttft": {
+                "met": 0,
+                "total": 2
+              }
+            },
+            "total_turns": 8,
+            "successful_turns": 8
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 134.84953250735998,
+            "avg_tpot_ms": 7.7721028368714755,
+            "avg_e2e_ms": 1620.1183358207345,
+            "p99_ttft_ms": 174.68571290373802,
+            "p99_tpot_ms": 7.805646991166543,
+            "p99_e2e_ms": 2157.7466875314713
+          },
+          "routing_stats": {},
+          "num_conversations": 4
+        },
+        {
+          "x_value": 2,
+          "slo_attainment": {
+            "overall": 25.0,
+            "by_objective": {
+              "ttft": {
+                "met": 0,
+                "total": 2
+              },
+              "e2e": {
+                "met": 0,
+                "total": 4
+              },
+              "tpot": {
+                "met": 2,
+                "total": 2
+              }
+            },
+            "total_turns": 8,
+            "successful_turns": 8
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 122.20389721915126,
+            "avg_tpot_ms": 7.780813485595645,
+            "avg_e2e_ms": 1608.4049809724092,
+            "p99_ttft_ms": 155.56824952363968,
+            "p99_tpot_ms": 7.870442754640354,
+            "p99_e2e_ms": 2119.417980313301
+          },
+          "routing_stats": {},
+          "num_conversations": 4
+        },
+        {
+          "x_value": 4,
+          "slo_attainment": {
+            "overall": 62.5,
+            "by_objective": {
+              "ttft": {
+                "met": 1,
+                "total": 2
+              },
+              "e2e": {
+                "met": 0,
+                "total": 2
+              },
+              "tpot": {
+                "met": 4,
+                "total": 4
+              }
+            },
+            "total_turns": 8,
+            "successful_turns": 8
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 98.78284018486738,
+            "avg_tpot_ms": 7.660529211779514,
+            "avg_e2e_ms": 1564.5626727491617,
+            "p99_ttft_ms": 145.75247466564178,
+            "p99_tpot_ms": 7.80356470860687,
+            "p99_e2e_ms": 2092.967063188553
+          },
+          "routing_stats": {},
+          "num_conversations": 4
+        },
+        {
+          "x_value": 8,
+          "slo_attainment": {
+            "overall": 75.0,
+            "by_objective": {
+              "tpot": {
+                "met": 6,
+                "total": 6
+              },
+              "e2e": {
+                "met": 0,
+                "total": 2
+              }
+            },
+            "total_turns": 8,
+            "successful_turns": 8
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 112.01918497681618,
+            "avg_tpot_ms": 7.209327267889799,
+            "avg_e2e_ms": 1488.862426020205,
+            "p99_ttft_ms": 133.89860838651657,
+            "p99_tpot_ms": 7.2469493652891925,
+            "p99_e2e_ms": 1972.9030169546604
+          },
+          "routing_stats": {},
+          "num_conversations": 4
+        },
+        {
+          "x_value": 12,
+          "slo_attainment": {
+            "overall": 25.0,
+            "by_objective": {
+              "tpot": {
+                "met": 2,
+                "total": 2
+              },
+              "e2e": {
+                "met": 0,
+                "total": 2
+              },
+              "ttft": {
+                "met": 0,
+                "total": 4
+              }
+            },
+            "total_turns": 8,
+            "successful_turns": 8
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 112.53462266176939,
+            "avg_tpot_ms": 7.245786009798963,
+            "avg_e2e_ms": 1497.0568041317165,
+            "p99_ttft_ms": 124.05739724636078,
+            "p99_tpot_ms": 7.3967844539997625,
+            "p99_e2e_ms": 2010.8813717961311
+          },
+          "routing_stats": {},
+          "num_conversations": 4
+        },
+        {
+          "x_value": 16,
+          "slo_attainment": {
+            "overall": 50.0,
+            "by_objective": {
+              "tpot": {
+                "met": 4,
+                "total": 4
+              },
+              "e2e": {
+                "met": 0,
+                "total": 2
+              },
+              "ttft": {
+                "met": 0,
+                "total": 2
+              }
+            },
+            "total_turns": 8,
+            "successful_turns": 8
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 103.96170895546675,
+            "avg_tpot_ms": 7.183347050527907,
+            "avg_e2e_ms": 1476.2367405928671,
+            "p99_ttft_ms": 130.19804656505585,
+            "p99_tpot_ms": 7.198536636557166,
+            "p99_e2e_ms": 1965.9230783581734
+          },
+          "routing_stats": {},
+          "num_conversations": 4
+        }
+      ]
+    }
+  }
+}

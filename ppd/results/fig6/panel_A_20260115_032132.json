@@ -1,0 +1,250 @@
+{
+  "panel": "A",
+  "name": "Objective Type Comparison",
+  "x_axis": "objective_type",
+  "data_points": [
+    {
+      "x_value": "Pure_TTFT",
+      "qps": 8,
+      "objective_dist": {
+        "ttft": 1.0,
+        "tpot": 0.0,
+        "e2e": 0.0
+      },
+      "turn_configs": [
+        {
+          "input": 512,
+          "output": 256
+        },
+        {
+          "input": 128,
+          "output": 128
+        }
+      ],
+      "modes": {
+        "pd": {
+          "slo_attainment": {
+            "overall": 1.8518518518518516,
+            "by_objective": {
+              "ttft": {
+                "met": 1,
+                "total": 54
+              }
+            },
+            "total_turns": 54,
+            "successful_turns": 54
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 1365.63911171699,
+            "avg_tpot_ms": 9.720331053330458,
+            "avg_e2e_ms": 3266.085484582517,
+            "p50_ttft_ms": 1140.81497117877,
+            "p99_ttft_ms": 3934.726145118475,
+            "p50_tpot_ms": 9.013479824845247,
+            "p99_tpot_ms": 17.225071641744353,
+            "p50_e2e_ms": 2788.003481924534,
+            "p99_e2e_ms": 6220.177412033081
+          },
+          "routing_stats": {
+            "pd": 54
+          },
+          "num_conversations": 27,
+          "num_turns": 54
+        }
+      },
+      "best_mode": "pd",
+      "best_slo": 1.8518518518518516,
+      "best_e2e": 3266.085484582517
+    },
+    {
+      "x_value": "Pure_TPOT",
+      "qps": 8,
+      "objective_dist": {
+        "ttft": 0.0,
+        "tpot": 1.0,
+        "e2e": 0.0
+      },
+      "turn_configs": [
+        {
+          "input": 512,
+          "output": 256
+        },
+        {
+          "input": 128,
+          "output": 128
+        }
+      ],
+      "modes": {
+        "pd": {
+          "slo_attainment": {
+            "overall": 0.0,
+            "by_objective": {
+              "tpot": {
+                "met": 0,
+                "total": 44
+              }
+            },
+            "total_turns": 44,
+            "successful_turns": 44
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 1224.375541914593,
+            "avg_tpot_ms": 9.714850178884477,
+            "avg_e2e_ms": 3122.279696335847,
+            "p50_ttft_ms": 926.298450678587,
+            "p99_ttft_ms": 3596.949253231287,
+            "p50_tpot_ms": 9.103447374865764,
+            "p99_tpot_ms": 15.2564871106662,
+            "p50_e2e_ms": 2622.8572465479374,
+            "p99_e2e_ms": 5873.101565986872
+          },
+          "routing_stats": {
+            "pd": 44
+          },
+          "num_conversations": 22,
+          "num_turns": 44
+        }
+      },
+      "best_mode": "pd",
+      "best_slo": 0.0,
+      "best_e2e": 3122.279696335847
+    },
+    {
+      "x_value": "Pure_E2E",
+      "qps": 8,
+      "objective_dist": {
+        "ttft": 0.0,
+        "tpot": 0.0,
+        "e2e": 1.0
+      },
+      "turn_configs": [
+        {
+          "input": 512,
+          "output": 256
+        },
+        {
+          "input": 128,
+          "output": 128
+        }
+      ],
+      "modes": {
+        "pd": {
+          "slo_attainment": {
+            "overall": 0.0,
+            "by_objective": {
+              "e2e": {
+                "met": 0,
+                "total": 54
+              }
+            },
+            "total_turns": 54,
+            "successful_turns": 54
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 1212.4884223082552,
+            "avg_tpot_ms": 9.604448151530354,
+            "avg_e2e_ms": 3080.9463068015048,
+            "p50_ttft_ms": 1059.482865035534,
+            "p99_ttft_ms": 3453.6273032426834,
+            "p50_tpot_ms": 9.015389168121683,
+            "p99_tpot_ms": 16.182615359624226,
+            "p50_e2e_ms": 2457.588270306587,
+            "p99_e2e_ms": 5732.934810221195
+          },
+          "routing_stats": {
+            "pd": 54
+          },
+          "num_conversations": 27,
+          "num_turns": 54
+        }
+      },
+      "best_mode": "pd",
+      "best_slo": 0.0,
+      "best_e2e": 3080.9463068015048
+    },
+    {
+      "x_value": "Mixed_Balanced",
+      "qps": 8,
+      "objective_dist": {
+        "ttft": 0.33,
+        "tpot": 0.34,
+        "e2e": 0.33
+      },
+      "turn_configs": [
+        {
+          "input": 512,
+          "output": 256
+        },
+        {
+          "input": 128,
+          "output": 128
+        }
+      ],
+      "modes": {
+        "pd": {
+          "slo_attainment": {
+            "overall": 0.0,
+            "by_objective": {
+              "tpot": {
+                "met": 0,
+                "total": 20
+              },
+              "e2e": {
+                "met": 0,
+                "total": 16
+              },
+              "ttft": {
+                "met": 0,
+                "total": 6
+              }
+            },
+            "total_turns": 42,
+            "successful_turns": 42
+          },
+          "latency_stats": {
+            "avg_ttft_ms": 1337.7132514225584,
+            "avg_tpot_ms": 9.210349852625596,
+            "avg_e2e_ms": 3115.1730789847315,
+            "p50_ttft_ms": 938.0215033888817,
+            "p99_ttft_ms": 3541.428752243519,
+            "p50_tpot_ms": 8.856879884567787,
+            "p99_tpot_ms": 16.42059435447057,
+            "p50_e2e_ms": 2839.4193053245544,
+            "p99_e2e_ms": 5760.167594999075
+          },
+          "routing_stats": {
+            "pd": 42
+          },
+          "num_conversations": 21,
+          "num_turns": 42
+        }
+      },
+      "best_mode": "pd",
+      "best_slo": 0.0,
+      "best_e2e": 3115.1730789847315
+    },
+    {
+      "x_value": "Mixed_TPOT_Heavy",
+      "qps": 8,
+      "objective_dist": {
+        "ttft": 0.25,
+        "tpot": 0.5,
+        "e2e": 0.25
+      },
+      "turn_configs": [
+        {
+          "input": 512,
+          "output": 256
+        },
+        {
+          "input": 128,
+          "output": 128
+        }
+      ],
+      "modes": {},
+      "best_mode": null,
+      "best_slo": -1,
+      "best_e2e": Infinity
+    }
+  ]
+}

@@ -19,23 +19,27 @@
 
 set -e
 
-# Environment checks
-PYTHON_PATH=$(which python)
-if [[ "$PYTHON_PATH" != *"vllm-ppd"* ]]; then
-    echo "ERROR: Please activate vllm-ppd first:"
-    echo "  conda activate vllm-ppd"
-    exit 1
-fi
-
-if ! python -c "import quart" 2>/dev/null; then
-    echo "ERROR: quart not installed. Fix: pip install quart"
-    exit 1
-fi
-
 MODE="${1:-ppd}"
 
 SCRIPT_DIR="$(dirname "$0")"
 PROJECT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
+
+# Source common functions
+source "$SCRIPT_DIR/common.sh" 2>/dev/null || true
+
+# Check environment
+check_environment || exit 1
+
+# Check GPU availability (GPUs 0-3)
+echo ""
+check_gpu_availability "0,1,2,3"
+gpu_status=$?
+if [ $gpu_status -eq 1 ]; then
+    exit 1
+elif [ $gpu_status -eq 2 ]; then
+    # Force cleanup requested
+    force_cleanup
+fi
 
 # Configuration
 MODEL_PATH="/net/projects2/ds3lab/zongzel/models--meta-llama--Llama-3.1-8B"
