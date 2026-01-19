@@ -68,7 +68,7 @@ ppd/
 │       ├── test_production_scenario.py        # Production scenario tests
 │       └── verify_mode_switching.py           # Verify PD/PPD switching
 ├── optimizer/                        # Optimizer module
-│   ├── rule_based_selector.py        # Rule-based mode selection
+│   ├── improved_selector.py          # Hybrid mode selection (lookup + model)
 │   ├── optimizer_router.py           # Request routing logic
 │   └── metrics_collector.py          # Performance metrics collection
 ├── docs/                             # Documentation

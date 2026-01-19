@@ -1,0 +1,51 @@
+{
+  "config": "1P_2D_1pD",
+  "workload": "large_short_gen",
+  "qps": 12,
+  "turn1": {
+    "count": 50,
+    "avg_ttft_ms": 1016.2082957476377,
+    "avg_tpot_ms": 10.381525584723244,
+    "avg_e2e_ms": 11636.508968919516,
+    "p50_ttft_ms": 1119.633385911584,
+    "p50_tpot_ms": 10.201949134600127,
+    "p50_e2e_ms": 11542.123643681407,
+    "p99_ttft_ms": 1895.3790674358606,
+    "p99_tpot_ms": 11.344050422187017,
+    "p99_e2e_ms": 13463.953592292964
+  },
+  "turn2": {
+    "count": 39,
+    "avg_ttft_ms": 248.98950115610393,
+    "avg_tpot_ms": 10.607960858780755,
+    "avg_e2e_ms": 2954.019520145196,
+    "p50_ttft_ms": 165.6779684126377,
+    "p50_tpot_ms": 10.410643164433685,
+    "p50_e2e_ms": 2910.8235463500023,
+    "p99_ttft_ms": 692.3979865759603,
+    "p99_tpot_ms": 11.805563548616334,
+    "p99_e2e_ms": 3364.440399557352
+  },
+  "average": {
+    "count": 89,
+    "avg_ttft_ms": 680.0112958704487,
+    "avg_tpot_ms": 10.480750030658557,
+    "avg_e2e_ms": 7831.822581254364,
+    "p50_ttft_ms": 463.9907740056515,
+    "p50_tpot_ms": 10.34250453056245,
+    "p50_e2e_ms": 9925.749748945236,
+    "p99_ttft_ms": 1880.4912497103217,
+    "p99_tpot_ms": 11.783655262460895,
+    "p99_e2e_ms": 13423.68841663003
+  },
+  "throughput": {
+    "requests_per_sec": 1.1257651232958625,
+    "tokens_per_sec": 773.9192506037534
+  },
+  "success_rate": 52.352941176470594,
+  "total_requests": 170,
+  "failed_requests": 81,
+  "duration_sec": 79.05734345316887,
+  "timestamp": "2026-01-18T06:05:35.713388",
+  "error": "HTTP 500: {\"error\":\"Cannot connect to host 192.168; Response payload is not completed: <TransferEncodi"
+}

@@ -1,0 +1,51 @@
+{
+  "config": "1P_2D_1pD",
+  "workload": "large_long_gen",
+  "qps": 0.5,
+  "turn1": {
+    "count": 0,
+    "avg_ttft_ms": 0,
+    "avg_tpot_ms": 0,
+    "avg_e2e_ms": 0,
+    "p50_ttft_ms": 0,
+    "p50_tpot_ms": 0,
+    "p50_e2e_ms": 0,
+    "p99_ttft_ms": 0,
+    "p99_tpot_ms": 0,
+    "p99_e2e_ms": 0
+  },
+  "turn2": {
+    "count": 0,
+    "avg_ttft_ms": 0,
+    "avg_tpot_ms": 0,
+    "avg_e2e_ms": 0,
+    "p50_ttft_ms": 0,
+    "p50_tpot_ms": 0,
+    "p50_e2e_ms": 0,
+    "p99_ttft_ms": 0,
+    "p99_tpot_ms": 0,
+    "p99_e2e_ms": 0
+  },
+  "average": {
+    "count": 0,
+    "avg_ttft_ms": 0,
+    "avg_tpot_ms": 0,
+    "avg_e2e_ms": 0,
+    "p50_ttft_ms": 0,
+    "p50_tpot_ms": 0,
+    "p50_e2e_ms": 0,
+    "p99_ttft_ms": 0,
+    "p99_tpot_ms": 0,
+    "p99_e2e_ms": 0
+  },
+  "throughput": {
+    "requests_per_sec": 0.0,
+    "tokens_per_sec": 0.0
+  },
+  "success_rate": 0.0,
+  "total_requests": 5,
+  "failed_requests": 5,
+  "duration_sec": 6.228059865534306,
+  "timestamp": "2026-01-18T06:06:04.416488",
+  "error": "HTTP 500: {\"error\":\"Cannot connect to host 192.168"
+}
