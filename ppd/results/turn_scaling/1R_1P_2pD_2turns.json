@@ -1,0 +1,51 @@
+{
+  "config": "1R_1P_2pD",
+  "num_turns": 2,
+  "workload": "small_mid_bal",
+  "qps": 4.0,
+  "per_turn_metrics": [
+    {
+      "turn": 1,
+      "count": 15,
+      "avg_ttft_ms": 84.4891406595707,
+      "avg_tpot_ms": 7.84180310024364,
+      "avg_e2e_ms": 1080.3981343905132,
+      "p50_ttft_ms": 96.82183712720871,
+      "p99_ttft_ms": 153.6131650209427,
+      "p50_tpot_ms": 7.840322051930615,
+      "p99_tpot_ms": 7.961617047040481
+    },
+    {
+      "turn": 2,
+      "count": 15,
+      "avg_ttft_ms": 31.489340215921402,
+      "avg_tpot_ms": 7.8128323350052815,
+      "avg_e2e_ms": 1023.7190467615923,
+      "p50_ttft_ms": 31.546317040920258,
+      "p99_ttft_ms": 34.61879253387451,
+      "p50_tpot_ms": 7.824777442169941,
+      "p99_tpot_ms": 7.896220945115164
+    }
+  ],
+  "summary": {
+    "avg_ttft_ms": 57.98924043774605,
+    "avg_tpot_ms": 7.827317717624461,
+    "avg_e2e_ms": 1052.0585905760527
+  },
+  "t1_metrics": {
+    "avg_ttft_ms": 84.4891406595707,
+    "avg_tpot_ms": 7.84180310024364,
+    "avg_e2e_ms": 1080.3981343905132
+  },
+  "t2plus_metrics": {
+    "avg_ttft_ms": 31.489340215921402,
+    "avg_tpot_ms": 7.8128323350052815,
+    "avg_e2e_ms": 1023.7190467615923
+  },
+  "total_conversations": 15,
+  "successful_conversations": 15,
+  "success_rate": 100.0,
+  "duration_sec": 31.577253103256226,
+  "timestamp": "2026-01-20T01:11:26.817012",
+  "error": null
+}

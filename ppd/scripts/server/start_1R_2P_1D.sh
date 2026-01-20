@@ -37,8 +37,8 @@ fi
 source "$SCRIPT_DIR/config.sh"
 
 # Server parameters
-MAX_MODEL_LEN=8192
-GPU_MEMORY_UTIL=0.85
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
+GPU_MEMORY_UTIL="${GPU_MEMORY_UTILIZATION:-0.85}"
 
 LOG_DIR="$PROJECT_DIR/logs/1R_2P_1D"
 SRC_DIR="$PROJECT_DIR/src"
@@ -133,7 +133,7 @@ CUDA_VISIBLE_DEVICES=3 vllm serve "$MODEL_PATH" \
 # Wait for servers
 echo ""
 echo "Waiting for servers to be ready..."
-MAX_WAIT=300
+MAX_WAIT=${MAX_WAIT:-300}  # Can be overridden via environment variable
 WAITED=0
 
 for PORT in 8300 8100 8101 8200; do

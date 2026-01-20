@@ -1,0 +1,42 @@
+{
+  "config": "4R",
+  "model_name": "Qwen2.5-14B",
+  "model_size": "14B",
+  "model_path": "/net/projects2/ds3lab/zongzel/qwen-2.5-14B",
+  "workload": "small_mid_bal",
+  "qps": 4.0,
+  "turn1": {
+    "count": 10,
+    "avg_ttft_ms": 56.62285275757313,
+    "avg_tpot_ms": 12.345132111447064,
+    "avg_e2e_ms": 1624.4546309113503,
+    "p50_ttft_ms": 36.40916757285595,
+    "p99_ttft_ms": 191.60144876688722
+  },
+  "turn2": {
+    "count": 10,
+    "avg_ttft_ms": 39.81597311794758,
+    "avg_tpot_ms": 12.410084604043659,
+    "avg_e2e_ms": 1615.8967178314924,
+    "p50_ttft_ms": 38.087278604507446,
+    "p99_ttft_ms": 51.55812058597803
+  },
+  "average": {
+    "count": 20,
+    "avg_ttft_ms": 48.21941293776035,
+    "avg_tpot_ms": 12.377608357745363,
+    "avg_e2e_ms": 1620.1756743714213,
+    "p50_ttft_ms": 37.57591359317303,
+    "p99_ttft_ms": 176.86666015535573
+  },
+  "throughput": {
+    "requests_per_sec": 0.6169985445023659,
+    "tokens_per_sec": 78.97581369630284
+  },
+  "total_requests": 20,
+  "successful_requests": 20,
+  "success_rate": 100.0,
+  "duration_sec": 32.414987325668335,
+  "timestamp": "2026-01-20T03:30:15.038816",
+  "error": null
+}
