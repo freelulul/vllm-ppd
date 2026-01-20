@@ -31,7 +31,7 @@ check_environment || exit 1
 source "$SCRIPT_DIR/config.sh"
 
 # Server parameters
-MAX_MODEL_LEN=8192
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
 GPU_MEMORY_UTIL=0.90  # Higher utilization for single server
 
 LOG_DIR="$PROJECT_DIR/logs/single_replica"
@@ -88,7 +88,7 @@ echo "Server PID: $SERVER_PID"
 # Wait for server to be ready
 echo ""
 echo "Waiting for server to be ready..."
-MAX_WAIT=300
+MAX_WAIT=${MAX_WAIT:-300}  # Can be overridden via environment variable
 WAITED=0
 
 while ! curl -s "http://localhost:$PORT/health" > /dev/null 2>&1; do

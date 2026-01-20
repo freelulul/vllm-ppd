@@ -2,7 +2,7 @@
 #SBATCH --job-name=interference
 #SBATCH --output=logs/benchmark/interference_%j.out
 #SBATCH --error=logs/benchmark/interference_%j.err
-#SBATCH --time=02:00:00
+#SBATCH --time=04:00:00
 #SBATCH --partition=ds3lab-own
 #SBATCH --nodelist=n001
 #SBATCH --gres=gpu:1
@@ -16,10 +16,16 @@
 # 证明append-prefill与decode共存时干扰很小
 #
 # 实验内容：
-# 1. 核心实验：三线对比 (decode-only vs full-prefill vs append-prefill)
-# 2. 敏感性实验：不同append-prefill大小的干扰程度
+# 1. 核心实验：多线对比
+#    - decoding_only (baseline)
+#    - decoding_with_N_full_prefill (N=1,2,4个cold prefill插入)
+#    - decoding_with_N_append_prefill (N=1,2,4个warm prefill插入)
+#    - Batch sizes: 0-250 (26个点)
 #
-# 预计时间：~45分钟
+# 2. 敏感性实验：不同append-prefill输入长度的干扰程度
+#    - Input lengths: 16-1024 tokens (17个点)
+#
+# 预计时间：~2-3小时
 # =============================================================================
 
 set -e

@@ -64,14 +64,19 @@ APPEND_PREFILL_CONFIG = {
     "output": 64,         # Generate some tokens to measure TPOT
 }
 
-# Test parameters
-BATCH_SIZES = [8, 16, 32, 64, 128]
-REPEAT_TIMES = 10
+# Test parameters - Dense data points for paper quality figures
+# Batch sizes: 0, 10, 20, ..., 250 (26 points, like DistServe Figure 2)
+BATCH_SIZES = list(range(0, 260, 10))  # [0, 10, 20, ..., 250]
+REPEAT_TIMES = 5  # 5 repetitions for averaging (total runs = 26 * 5 * scenarios)
 WARMUP_REQUESTS = 5
+
+# Prefill counts to test (how many prefill jobs inserted into decode batch)
+PREFILL_COUNTS = [1, 2, 4]  # Test with 1, 2, and 4 prefills
 
 # Sensitivity test parameters
 SENSITIVITY_BATCH_SIZE = 64
-APPEND_INPUT_SIZES = [32, 64, 128, 256, 512, 1024]
+# Dense input sizes: 16, 32, 48, ..., 1024 (22 points)
+APPEND_INPUT_SIZES = [16, 32, 48, 64, 96, 128, 160, 192, 256, 320, 384, 448, 512, 640, 768, 896, 1024]
 
 # Output directory
 OUTPUT_DIR = os.path.join(PROJECT_DIR, "results", "interference")
@@ -312,12 +317,13 @@ async def run_batch(
     decode_count: int,
     context_prefix: str,  # Shared prefix for cache
     prefill_config: Optional[Dict] = None,  # None for decode-only
+    prefill_count: int = 1,  # Number of prefill requests to insert
 ) -> BatchResult:
     """
     Run a batch of requests concurrently.
 
     For decode requests: use context_prefix + small new input
-    For prefill request: use prefill_config (full or append)
+    For prefill requests: use prefill_config (full or append), can insert multiple
     """
     batch_id = f"batch_{int(time.time()*1000)}"
     tasks = []
@@ -334,28 +340,29 @@ async def run_batch(
             session, prompt, DECODE_CONFIG["output"], "decode"
         ))
 
-    # Create prefill request if specified
+    # Create prefill requests if specified (can be multiple)
     prefill_type = None
     if prefill_config:
-        if prefill_config.get("context", 0) == 0:
-            # Full prefill - no cache
-            prefill_type = "full"
-            prefill_prompt = generate_random_text(
-                prefill_config["input"],
-                seed=f"{batch_id}_full_prefill"
-            )
-        else:
-            # Append prefill - with cache
-            prefill_type = "append"
-            new_input = generate_random_text(
-                prefill_config["input"],
-                seed=f"{batch_id}_append_prefill"
-            )
-            prefill_prompt = context_prefix + f" APPEND_PREFILL: " + new_input
+        for p_idx in range(prefill_count):
+            if prefill_config.get("context", 0) == 0:
+                # Full prefill - no cache (cold start)
+                prefill_type = "full"
+                prefill_prompt = generate_random_text(
+                    prefill_config["input"],
+                    seed=f"{batch_id}_full_prefill_{p_idx}"
+                )
+            else:
+                # Append prefill - with cache (warm, like PPD Turn 2+)
+                prefill_type = "append"
+                new_input = generate_random_text(
+                    prefill_config["input"],
+                    seed=f"{batch_id}_append_prefill_{p_idx}"
+                )
+                prefill_prompt = context_prefix + f" APPEND_PREFILL_{p_idx}: " + new_input
 
-        tasks.append(send_request(
-            session, prefill_prompt, prefill_config["output"], f"{prefill_type}_prefill"
-        ))
+            tasks.append(send_request(
+                session, prefill_prompt, prefill_config["output"], f"{prefill_type}_prefill"
+            ))
 
     # Run all requests concurrently
     batch_start = time.perf_counter()
@@ -366,7 +373,7 @@ async def run_batch(
 
     # Separate decode and prefill results
     decode_results = []
-    prefill_result = None
+    prefill_results = []
 
     for r in results:
         if isinstance(r, Exception):
@@ -374,7 +381,7 @@ async def run_batch(
         if r.request_type == "decode":
             decode_results.append(r)
         else:
-            prefill_result = r
+            prefill_results.append(r)
 
     # Calculate decode metrics
     successful_decodes = [r for r in decode_results if r.success]
@@ -387,12 +394,15 @@ async def run_batch(
     else:
         decode_avg_tpot = decode_avg_ttft = decode_avg_e2e = 0
 
+    # Calculate prefill metrics (average across all prefills)
+    successful_prefills = [r for r in prefill_results if r.success]
+
     # Build result
     result = BatchResult(
         scenario=scenario,
-        batch_size=decode_count + (1 if prefill_config else 0),
+        batch_size=decode_count + prefill_count if prefill_config else decode_count,
         decode_count=decode_count,
-        prefill_count=1 if prefill_config else 0,
+        prefill_count=prefill_count if prefill_config else 0,
         prefill_type=prefill_type,
         batch_execution_time_ms=batch_execution_time_ms,
         decode_avg_tpot_ms=decode_avg_tpot,
@@ -401,11 +411,11 @@ async def run_batch(
         decode_success_count=decode_success_count,
     )
 
-    if prefill_result:
-        result.prefill_ttft_ms = prefill_result.ttft_ms
-        result.prefill_tpot_ms = prefill_result.tpot_ms
-        result.prefill_e2e_ms = prefill_result.e2e_ms
-        result.prefill_success = prefill_result.success
+    if successful_prefills:
+        result.prefill_ttft_ms = np.mean([r.ttft_ms for r in successful_prefills])
+        result.prefill_tpot_ms = np.mean([r.tpot_ms for r in successful_prefills])
+        result.prefill_e2e_ms = np.mean([r.e2e_ms for r in successful_prefills])
+        result.prefill_success = len(successful_prefills) == prefill_count
 
     return result
 
@@ -416,20 +426,25 @@ async def run_batch(
 
 async def run_core_experiment() -> ExperimentResult:
     """
-    Run the core three-line comparison experiment.
+    Run the core experiment comparing prefill-decode interference.
 
-    For each batch size:
-    1. decode-only baseline
-    2. decode + one full-prefill
-    3. decode + one append-prefill
+    Tests different numbers of prefill jobs inserted into decode batches:
+    - decoding_only: Pure decode batch (baseline)
+    - decoding_with_N_full_prefill: N full prefills (cold start, no cache)
+    - decoding_with_N_append_prefill: N append prefills (warm, with cache)
+
+    Where N = 1, 2, 4 (configurable via PREFILL_COUNTS)
     """
     print("=" * 70)
     print("Core Experiment: Prefill-Decode Interference Comparison")
     print("=" * 70)
+    print(f"Batch sizes: {BATCH_SIZES[0]} to {BATCH_SIZES[-1]} ({len(BATCH_SIZES)} points)")
+    print(f"Prefill counts: {PREFILL_COUNTS}")
+    print(f"Repeat times: {REPEAT_TIMES}")
 
     all_results = []
 
-    connector = aiohttp.TCPConnector(limit=200, limit_per_host=200)
+    connector = aiohttp.TCPConnector(limit=300, limit_per_host=300)
     async with aiohttp.ClientSession(connector=connector) as session:
 
         # First, establish prefix cache
@@ -444,42 +459,57 @@ async def run_core_experiment() -> ExperimentResult:
             await warmup_cache(session, context_prefix)
         print("  Cache established.")
 
+        total_tests = len(BATCH_SIZES) * REPEAT_TIMES * (1 + 2 * len(PREFILL_COUNTS))
+        test_count = 0
+
         # Run experiments for each batch size
         for batch_size in BATCH_SIZES:
-            print(f"\n--- Batch Size: {batch_size} ---")
+            print(f"\n--- Decode Batch Size: {batch_size} ---")
 
             for repeat in range(REPEAT_TIMES):
-                print(f"  Repeat {repeat + 1}/{REPEAT_TIMES}...", end=" ", flush=True)
-
-                # Scenario 1: Decode-only
-                result1 = await run_batch(
-                    session, "decode_only", batch_size, context_prefix, None
+                # Scenario 1: Decode-only baseline
+                result_baseline = await run_batch(
+                    session, "decoding_only", batch_size, context_prefix, None
                 )
-                all_results.append(asdict(result1))
+                all_results.append(asdict(result_baseline))
+                test_count += 1
+                await asyncio.sleep(0.3)
 
-                await asyncio.sleep(0.5)  # Brief pause between scenarios
+                # Test different prefill counts
+                for num_prefills in PREFILL_COUNTS:
+                    # Scenario: Decode + N full-prefills (cold start)
+                    result_full = await run_batch(
+                        session,
+                        f"decoding_with_{num_prefills}_full_prefill",
+                        batch_size,
+                        context_prefix,
+                        FULL_PREFILL_CONFIG,
+                        prefill_count=num_prefills
+                    )
+                    all_results.append(asdict(result_full))
+                    test_count += 1
+                    await asyncio.sleep(0.3)
 
-                # Scenario 2: Decode + Full-prefill
-                result2 = await run_batch(
-                    session, "decode_with_full_prefill", batch_size,
-                    context_prefix, FULL_PREFILL_CONFIG
-                )
-                all_results.append(asdict(result2))
+                    # Scenario: Decode + N append-prefills (warm, with cache)
+                    result_append = await run_batch(
+                        session,
+                        f"decoding_with_{num_prefills}_append_prefill",
+                        batch_size,
+                        context_prefix,
+                        APPEND_PREFILL_CONFIG,
+                        prefill_count=num_prefills
+                    )
+                    all_results.append(asdict(result_append))
+                    test_count += 1
+                    await asyncio.sleep(0.3)
 
-                await asyncio.sleep(0.5)
-
-                # Scenario 3: Decode + Append-prefill
-                result3 = await run_batch(
-                    session, "decode_with_append_prefill", batch_size,
-                    context_prefix, APPEND_PREFILL_CONFIG
-                )
-                all_results.append(asdict(result3))
-
-                print(f"TPOT: base={result1.decode_avg_tpot_ms:.1f}, "
-                      f"full={result2.decode_avg_tpot_ms:.1f}, "
-                      f"append={result3.decode_avg_tpot_ms:.1f}")
-
-                await asyncio.sleep(0.5)
+                # Progress report
+                progress = test_count / total_tests * 100
+                print(f"  Rep {repeat+1}/{REPEAT_TIMES}: "
+                      f"base={result_baseline.decode_avg_tpot_ms:.1f}ms, "
+                      f"1-full={all_results[-5]['decode_avg_tpot_ms']:.1f}ms, "
+                      f"1-append={all_results[-4]['decode_avg_tpot_ms']:.1f}ms "
+                      f"[{progress:.0f}%]")
 
     return ExperimentResult(
         experiment_type="core",
@@ -499,13 +529,17 @@ async def run_core_experiment() -> ExperimentResult:
 
 async def run_sensitivity_experiment() -> ExperimentResult:
     """
-    Run the append-prefill size sensitivity experiment.
+    Run the append-prefill input length sensitivity experiment.
 
     Fixed decode batch size, varying append-prefill input length.
+    Shows how interference scales with input length.
     """
     print("\n" + "=" * 70)
-    print("Sensitivity Experiment: Append-prefill Size Impact")
+    print("Sensitivity Experiment: Append-prefill Input Length Impact")
     print("=" * 70)
+    print(f"Decode batch size: {SENSITIVITY_BATCH_SIZE}")
+    print(f"Input lengths: {APPEND_INPUT_SIZES[0]} to {APPEND_INPUT_SIZES[-1]} ({len(APPEND_INPUT_SIZES)} points)")
+    print(f"Repeat times: {REPEAT_TIMES}")
 
     all_results = []
 
@@ -525,11 +559,11 @@ async def run_sensitivity_experiment() -> ExperimentResult:
         print("  Cache established.")
 
         # Get decode-only baseline first
-        print(f"\nGetting decode-only baseline (batch={SENSITIVITY_BATCH_SIZE})...")
+        print(f"\nGetting decoding_only baseline (batch={SENSITIVITY_BATCH_SIZE})...")
         baseline_tpots = []
         for repeat in range(REPEAT_TIMES):
             result = await run_batch(
-                session, "decode_only_baseline",
+                session, "decoding_only_baseline",
                 SENSITIVITY_BATCH_SIZE, context_prefix, None
             )
             baseline_tpots.append(result.decode_avg_tpot_ms)
@@ -539,35 +573,42 @@ async def run_sensitivity_experiment() -> ExperimentResult:
         baseline_avg_tpot = np.mean(baseline_tpots)
         print(f"  Baseline TPOT: {baseline_avg_tpot:.2f} ms")
 
-        # Test different append-prefill sizes
+        # Test different input sizes
+        total_tests = len(APPEND_INPUT_SIZES) * REPEAT_TIMES
+        test_count = 0
+
         for input_size in APPEND_INPUT_SIZES:
-            print(f"\n--- Append-prefill Input Size: {input_size} ---")
+            print(f"\n--- Append Input Length: {input_size} tokens ---")
 
             append_config = {
-                "context": DECODE_CONFIG["context"],
+                "context": DECODE_CONFIG["context"],  # Has cache
                 "input": input_size,
                 "output": 64,
             }
 
             for repeat in range(REPEAT_TIMES):
-                print(f"  Repeat {repeat + 1}/{REPEAT_TIMES}...", end=" ", flush=True)
-
                 result = await run_batch(
-                    session, f"decode_with_append_{input_size}",
-                    SENSITIVITY_BATCH_SIZE, context_prefix, append_config
+                    session,
+                    f"decoding_with_1_append_prefill_len{input_size}",
+                    SENSITIVITY_BATCH_SIZE, context_prefix, append_config,
+                    prefill_count=1
                 )
 
-                # Calculate slowdown
                 slowdown = ((result.decode_avg_tpot_ms - baseline_avg_tpot)
                            / baseline_avg_tpot * 100) if baseline_avg_tpot > 0 else 0
 
                 result_dict = asdict(result)
-                result_dict["append_input_size"] = input_size
+                result_dict["append_input_length"] = input_size
                 result_dict["decode_slowdown_percent"] = slowdown
                 result_dict["baseline_tpot_ms"] = baseline_avg_tpot
                 all_results.append(result_dict)
 
-                print(f"TPOT={result.decode_avg_tpot_ms:.1f}ms, slowdown={slowdown:.1f}%")
+                test_count += 1
+                progress = test_count / total_tests * 100
+
+                print(f"  Rep {repeat+1}/{REPEAT_TIMES}: "
+                      f"TPOT={result.decode_avg_tpot_ms:.1f}ms, "
+                      f"slowdown={slowdown:+.1f}% [{progress:.0f}%]")
 
                 await asyncio.sleep(0.3)
 
@@ -612,15 +653,16 @@ async def check_server_health() -> bool:
 
 
 async def main():
+    global SERVER_URL
+
     parser = argparse.ArgumentParser(description="Interference Benchmark")
     parser.add_argument("--core", action="store_true", help="Run core experiment")
     parser.add_argument("--sensitivity", action="store_true", help="Run sensitivity experiment")
     parser.add_argument("--all", action="store_true", help="Run all experiments")
-    parser.add_argument("--server-url", type=str, default=SERVER_URL,
+    parser.add_argument("--server-url", type=str, default="http://localhost:8300",
                        help="Server URL (default: http://localhost:8300)")
     args = parser.parse_args()
 
-    global SERVER_URL
     SERVER_URL = args.server_url
 
     if not any([args.core, args.sensitivity, args.all]):

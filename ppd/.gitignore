@@ -1,5 +1,4 @@
-# Results and logs - do not upload to GitHub
-# results/
+sbatch*
 logs/
 docs/
 archive/
