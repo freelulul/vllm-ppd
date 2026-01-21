@@ -1,0 +1,42 @@
+{
+  "config": "1R_1P_1D_1pD",
+  "model_name": "Llama-3.1-8B",
+  "model_size": "8B",
+  "model_path": "/net/projects2/ds3lab/zongzel/models--meta-llama--Llama-3.1-8B",
+  "workload": "small_mid_bal",
+  "qps": 4.0,
+  "turn1": {
+    "count": 14,
+    "avg_ttft_ms": 105.09597456880978,
+    "avg_tpot_ms": 7.806089925668773,
+    "avg_e2e_ms": 1096.469395128744,
+    "p50_ttft_ms": 114.74720016121864,
+    "p99_ttft_ms": 171.28319293260571
+  },
+  "turn2": {
+    "count": 14,
+    "avg_ttft_ms": 77.85364825810704,
+    "avg_tpot_ms": 7.788561737108284,
+    "avg_e2e_ms": 1067.0009888708591,
+    "p50_ttft_ms": 73.30751232802868,
+    "p99_ttft_ms": 131.96753814816475
+  },
+  "average": {
+    "count": 28,
+    "avg_ttft_ms": 91.47481141345841,
+    "avg_tpot_ms": 7.797325831388528,
+    "avg_e2e_ms": 1081.7351919998016,
+    "p50_ttft_ms": 114.26136642694473,
+    "p99_ttft_ms": 166.9589951634407
+  },
+  "throughput": {
+    "requests_per_sec": 0.9239405669954024,
+    "tokens_per_sec": 118.2643925754115
+  },
+  "total_requests": 28,
+  "successful_requests": 28,
+  "success_rate": 100.0,
+  "duration_sec": 30.3049795627594,
+  "timestamp": "2026-01-20T21:20:59.150236",
+  "error": null
+}

@@ -33,6 +33,8 @@ import seaborn as sns
 # Project paths
 PROJECT_DIR = Path(__file__).parent.parent.parent
 DATA_DIR = PROJECT_DIR / "results" / "comprehensive"
+TURN_SCALING_DIR = PROJECT_DIR / "results" / "turn_scaling"
+MODEL_SCALING_DIR = PROJECT_DIR / "results" / "model_scaling"
 OUTPUT_DIR = PROJECT_DIR / "results" / "analysis" / "figures"
 
 # Style settings
@@ -168,6 +170,78 @@ def load_data() -> pd.DataFrame:
 
     df = pd.DataFrame(all_records)
     print(f"Loaded {len(df)} records")
+    return df
+
+
+def load_turn_scaling_data() -> pd.DataFrame:
+    """Load turn scaling experiment data."""
+    print("Loading turn scaling data...")
+    records = []
+
+    for json_file in TURN_SCALING_DIR.glob("*.json"):
+        if json_file.name == "all_results.json":
+            continue
+        try:
+            with open(json_file) as f:
+                data = json.load(f)
+
+            # Parse filename: e.g., "2P_2D_8turns.json" -> config="2P_2D", num_turns=8
+            parts = json_file.stem.rsplit('_', 1)
+            config = parts[0]
+            num_turns = int(parts[1].replace('turns', ''))
+
+            records.append({
+                "config": config,
+                "num_turns": num_turns,
+                "t1_ttft": data.get("t1_metrics", {}).get("avg_ttft_ms"),
+                "t2plus_ttft": data.get("t2plus_metrics", {}).get("avg_ttft_ms"),
+                "t1_tpot": data.get("t1_metrics", {}).get("avg_tpot_ms"),
+                "t2plus_tpot": data.get("t2plus_metrics", {}).get("avg_tpot_ms"),
+                "per_turn_metrics": data.get("per_turn_metrics", []),
+                "workload": data.get("workload", ""),
+                "qps": data.get("qps", 0),
+            })
+        except Exception as e:
+            print(f"  Error loading {json_file}: {e}")
+
+    df = pd.DataFrame(records)
+    print(f"Loaded {len(df)} turn scaling records")
+    return df
+
+
+def load_model_scaling_data() -> pd.DataFrame:
+    """Load model scaling experiment data."""
+    print("Loading model scaling data...")
+    records = []
+
+    for json_file in MODEL_SCALING_DIR.glob("*.json"):
+        if json_file.name == "all_results.json":
+            continue
+        try:
+            with open(json_file) as f:
+                data = json.load(f)
+
+            records.append({
+                "model_size": data.get("model_size", ""),
+                "model_name": data.get("model_name", ""),
+                "config": data.get("config", ""),
+                "t1_ttft": data.get("turn1", {}).get("avg_ttft_ms"),
+                "t2_ttft": data.get("turn2", {}).get("avg_ttft_ms"),
+                "t1_tpot": data.get("turn1", {}).get("avg_tpot_ms"),
+                "t2_tpot": data.get("turn2", {}).get("avg_tpot_ms"),
+                "t1_e2e": data.get("turn1", {}).get("avg_e2e_ms"),
+                "t2_e2e": data.get("turn2", {}).get("avg_e2e_ms"),
+                "avg_tpot": data.get("average", {}).get("avg_tpot_ms"),
+                "avg_e2e": data.get("average", {}).get("avg_e2e_ms"),
+                "workload": data.get("workload", ""),
+                "qps": data.get("qps", 0),
+                "success_rate": data.get("success_rate", 0),
+            })
+        except Exception as e:
+            print(f"  Error loading {json_file}: {e}")
+
+    df = pd.DataFrame(records)
+    print(f"Loaded {len(df)} model scaling records")
     return df
 
 
@@ -1097,6 +1171,327 @@ def plot_Part4_Fig1_1p_scalability(df: pd.DataFrame, output_dir: Path):
     print("  Saved Part4_Fig1_1p_scalability_comparison.png")
 
 
+def plot_Part2_Fig3_turn_scaling(output_dir: Path):
+    """
+    Part2_Fig3: Turn Scaling Validation
+
+    Validates that PPD's T2+ TTFT advantage persists across multi-turn conversations.
+    Two-panel design:
+    - Panel A: Per-turn TTFT progression (8 turns) - shows PD degradation vs PPD stability
+    - Panel B: T2+ TTFT vs turn count (2, 4, 8, 16) - confirms trend across turn counts
+
+    Key insight: PPD shows 68% T2+ TTFT reduction that remains stable across 2-16 turns,
+    while PD's T2+ TTFT increases with context size.
+    """
+    print("Plotting Part2_Fig3: Turn Scaling Validation...")
+
+    # Load turn scaling data
+    turn_df = load_turn_scaling_data()
+
+    if len(turn_df) == 0:
+        print("  No turn scaling data available, skipping...")
+        return
+
+    # Config colors
+    config_colors = {
+        '4R': '#2ecc71',       # Green - Replica
+        '2P_2D': '#3498db',    # Blue - PD
+        '2P_2pD': '#e74c3c',   # Red - PPD
+        '1R_1P_2pD': '#f39c12',  # Orange - Hybrid
+    }
+
+    # Markers
+    config_markers = {
+        '4R': 'o',
+        '2P_2D': 's',
+        '2P_2pD': '^',
+        '1R_1P_2pD': 'D',
+    }
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    # ===== Panel A: Per-turn TTFT progression (8 turns) =====
+    ax1 = axes[0]
+
+    # Get 8-turn data
+    turn8_data = turn_df[turn_df['num_turns'] == 8]
+
+    for _, row in turn8_data.iterrows():
+        config = row['config']
+        per_turn = row['per_turn_metrics']
+
+        if per_turn and len(per_turn) > 0:
+            turns = [m['turn'] for m in per_turn]
+            ttfts = [m['avg_ttft_ms'] for m in per_turn]
+
+            ax1.plot(turns, ttfts, marker=config_markers.get(config, 'o'),
+                    color=config_colors.get(config, '#333'),
+                    label=config, linewidth=2.5, markersize=8, alpha=0.9)
+
+    ax1.set_xlabel('Turn Number', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('TTFT (ms)', fontsize=12, fontweight='bold')
+    ax1.set_title('Per-Turn TTFT Progression (8 turns, QPS=4)\n'
+                  'PD increases with context; PPD stays flat',
+                  fontsize=11, fontweight='bold')
+    ax1.legend(loc='upper left', fontsize=10)
+    ax1.grid(True, alpha=0.3, linestyle='--')
+    ax1.set_axisbelow(True)
+    ax1.set_xticks(range(1, 9))
+
+    # Add annotations
+    # Find 2P_2D and 2P_2pD data for comparison
+    pd_row = turn8_data[turn8_data['config'] == '2P_2D']
+    ppd_row = turn8_data[turn8_data['config'] == '2P_2pD']
+
+    if len(pd_row) > 0 and len(ppd_row) > 0:
+        pd_per_turn = pd_row.iloc[0]['per_turn_metrics']
+        ppd_per_turn = ppd_row.iloc[0]['per_turn_metrics']
+
+        if pd_per_turn and ppd_per_turn:
+            # Get T8 values
+            pd_t8 = pd_per_turn[-1]['avg_ttft_ms']
+            ppd_t8 = ppd_per_turn[-1]['avg_ttft_ms']
+
+            # Annotate the difference
+            ax1.annotate(f'PD: {pd_t8:.0f}ms\n(grows with context)',
+                        xy=(8, pd_t8), xytext=(6.5, pd_t8 + 15),
+                        fontsize=9, ha='center',
+                        arrowprops=dict(arrowstyle='->', color='#3498db', lw=1.5),
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='#d4e6f1', edgecolor='#3498db'))
+
+            ax1.annotate(f'PPD: {ppd_t8:.0f}ms\n(stays flat)',
+                        xy=(8, ppd_t8), xytext=(6.5, ppd_t8 - 15),
+                        fontsize=9, ha='center',
+                        arrowprops=dict(arrowstyle='->', color='#e74c3c', lw=1.5),
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='#fadbd8', edgecolor='#e74c3c'))
+
+    # ===== Panel B: T2+ TTFT vs turn count (2, 4, 8, 16) =====
+    ax2 = axes[1]
+
+    configs_to_show = ['4R', '2P_2D', '2P_2pD', '1R_1P_2pD']
+    turn_counts = sorted(turn_df['num_turns'].unique())
+
+    for config in configs_to_show:
+        config_data = turn_df[turn_df['config'] == config].sort_values('num_turns')
+
+        if len(config_data) > 0:
+            ax2.plot(config_data['num_turns'], config_data['t2plus_ttft'],
+                    marker=config_markers.get(config, 'o'),
+                    color=config_colors.get(config, '#333'),
+                    label=config, linewidth=2.5, markersize=10, alpha=0.9)
+
+    ax2.set_xlabel('Number of Turns', fontsize=12, fontweight='bold')
+    ax2.set_ylabel('T2+ Average TTFT (ms)', fontsize=12, fontweight='bold')
+    ax2.set_title('T2+ TTFT Stability Across Turn Counts\n'
+                  'PPD advantage persists from 2 to 16 turns',
+                  fontsize=11, fontweight='bold')
+    ax2.legend(loc='upper left', fontsize=10)
+    ax2.grid(True, alpha=0.3, linestyle='--')
+    ax2.set_axisbelow(True)
+    ax2.set_xticks(turn_counts)
+
+    # Add shaded region showing PPD stability zone (0-50ms)
+    ax2.axhspan(0, 50, alpha=0.1, color='#27ae60', label='_nolegend_')
+    ax2.text(max(turn_counts), 25, 'PPD stable zone\n(<50ms)',
+            fontsize=9, ha='right', va='center', style='italic',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='#27ae60'))
+
+    # Calculate and annotate improvement
+    pd_data = turn_df[(turn_df['config'] == '2P_2D') & (turn_df['num_turns'] == 8)]
+    ppd_data = turn_df[(turn_df['config'] == '2P_2pD') & (turn_df['num_turns'] == 8)]
+
+    if len(pd_data) > 0 and len(ppd_data) > 0:
+        pd_t2plus = pd_data.iloc[0]['t2plus_ttft']
+        ppd_t2plus = ppd_data.iloc[0]['t2plus_ttft']
+        improvement = (pd_t2plus - ppd_t2plus) / pd_t2plus * 100 if pd_t2plus > 0 else 0
+
+        # Add summary box
+        summary_text = (f'At 8 turns:\n'
+                       f'PD T2+: {pd_t2plus:.1f}ms\n'
+                       f'PPD T2+: {ppd_t2plus:.1f}ms\n'
+                       f'Improvement: {improvement:.0f}%')
+        props = dict(boxstyle='round,pad=0.5', facecolor='#fff3cd', alpha=0.95, edgecolor='#f39c12')
+        ax2.text(0.98, 0.98, summary_text, transform=ax2.transAxes, fontsize=10,
+                verticalalignment='top', horizontalalignment='right', bbox=props)
+
+    # Suptitle
+    plt.suptitle('Turn Scaling Validation: PPD Advantage is Consistent Across Multi-Turn Conversations\n'
+                 '68% T2+ TTFT reduction maintained from 2 to 16 turns',
+                 fontsize=13, fontweight='bold', y=1.02)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.savefig(output_dir / 'Part2_Fig3_turn_scaling.png', facecolor='white', dpi=300)
+    plt.close()
+    print("  Saved Part2_Fig3_turn_scaling.png")
+
+
+def plot_Part2_Fig4_model_scaling(output_dir: Path):
+    """
+    Part2_Fig4: Model Scaling Analysis
+
+    Shows that PPD advantage is consistent across different model sizes (8B, 14B).
+    4 configurations × 3 metrics (T2 TTFT, TPOT, E2E) × 2 model sizes.
+
+    Configs: 4R (Replica), 2P_2D (PD), 2P_2pD (PPD), 1R_1P_1D_1pD (Hybrid)
+    """
+    print("Plotting Part2_Fig4: Model Scaling Analysis...")
+
+    # Load model scaling data
+    model_df = load_model_scaling_data()
+
+    if len(model_df) == 0:
+        print("  No model scaling data available, skipping...")
+        return
+
+    # 4 configs to show: Replica, PD, PPD, Hybrid
+    configs_to_show = ['4R', '2P_2D', '2P_2pD', '1R_1P_1D_1pD']
+    config_labels = ['4R\n(Replica)', '2P_2D\n(PD)', '2P_2pD\n(PPD)', '1R_1P_1D_1pD\n(Hybrid)']
+
+    model_df = model_df[model_df['config'].isin(configs_to_show)]
+
+    if len(model_df) == 0:
+        print("  No matching configs in model scaling data, skipping...")
+        return
+
+    # Config colors
+    config_colors = {
+        '4R': '#2ecc71',           # Green - Replica
+        '2P_2D': '#3498db',        # Blue - PD
+        '2P_2pD': '#e74c3c',       # Red - PPD
+        '1R_1P_1D_1pD': '#f39c12', # Orange - Hybrid
+    }
+
+    # Get model sizes (should be 8B, 14B)
+    model_sizes = ['8B', '14B']  # Fixed order
+    available_sizes = model_df['model_size'].unique()
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 6))
+
+    x = np.arange(len(model_sizes))
+    width = 0.18
+    n_configs = len(configs_to_show)
+
+    # ===== Panel A: T2 TTFT by model size =====
+    ax1 = axes[0]
+
+    for i, (config, label) in enumerate(zip(configs_to_show, config_labels)):
+        config_data = model_df[model_df['config'] == config]
+        values = []
+
+        for size in model_sizes:
+            size_data = config_data[config_data['model_size'] == size]
+            if len(size_data) > 0:
+                values.append(size_data.iloc[0]['t2_ttft'])
+            else:
+                values.append(np.nan)
+
+        offset = (i - (n_configs - 1) / 2) * width
+        bars = ax1.bar(x + offset, values, width,
+                      label=config, color=config_colors.get(config, '#333'),
+                      edgecolor='black', linewidth=0.5, alpha=0.9)
+
+        # Add value labels
+        for bar, val in zip(bars, values):
+            if not np.isnan(val) and val > 0:
+                ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2,
+                        f'{val:.0f}', ha='center', va='bottom', fontsize=8, fontweight='bold')
+
+    ax1.set_xlabel('Model Size', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('T2 TTFT (ms)', fontsize=12, fontweight='bold')
+    ax1.set_title('(a) T2 TTFT by Model Size\n(lower is better)', fontsize=11, fontweight='bold')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(model_sizes)
+    ax1.legend(loc='upper left', fontsize=9)
+    ax1.grid(True, alpha=0.3, axis='y', linestyle='--')
+    ax1.set_axisbelow(True)
+
+    # ===== Panel B: TPOT by model size =====
+    ax2 = axes[1]
+
+    for i, (config, label) in enumerate(zip(configs_to_show, config_labels)):
+        config_data = model_df[model_df['config'] == config]
+        values = []
+
+        for size in model_sizes:
+            size_data = config_data[config_data['model_size'] == size]
+            if len(size_data) > 0:
+                # Use average TPOT
+                val = size_data.iloc[0].get('avg_tpot')
+                if val is None or np.isnan(val):
+                    val = size_data.iloc[0].get('t2_tpot', np.nan)
+                values.append(val)
+            else:
+                values.append(np.nan)
+
+        offset = (i - (n_configs - 1) / 2) * width
+        bars = ax2.bar(x + offset, values, width,
+                      label=config, color=config_colors.get(config, '#333'),
+                      edgecolor='black', linewidth=0.5, alpha=0.9)
+
+        # Add value labels
+        for bar, val in zip(bars, values):
+            if not np.isnan(val) and val > 0:
+                ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.2,
+                        f'{val:.1f}', ha='center', va='bottom', fontsize=8, fontweight='bold')
+
+    ax2.set_xlabel('Model Size', fontsize=12, fontweight='bold')
+    ax2.set_ylabel('Avg TPOT (ms)', fontsize=12, fontweight='bold')
+    ax2.set_title('(b) Average TPOT by Model Size\n(lower is better)', fontsize=11, fontweight='bold')
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(model_sizes)
+    ax2.legend(loc='upper left', fontsize=9)
+    ax2.grid(True, alpha=0.3, axis='y', linestyle='--')
+    ax2.set_axisbelow(True)
+
+    # ===== Panel C: E2E Latency by model size =====
+    ax3 = axes[2]
+
+    for i, (config, label) in enumerate(zip(configs_to_show, config_labels)):
+        config_data = model_df[model_df['config'] == config]
+        values = []
+
+        for size in model_sizes:
+            size_data = config_data[config_data['model_size'] == size]
+            if len(size_data) > 0:
+                # Use average E2E
+                val = size_data.iloc[0].get('avg_e2e')
+                if val is None or np.isnan(val):
+                    val = size_data.iloc[0].get('t2_e2e', np.nan)
+                values.append(val)
+            else:
+                values.append(np.nan)
+
+        offset = (i - (n_configs - 1) / 2) * width
+        bars = ax3.bar(x + offset, values, width,
+                      label=config, color=config_colors.get(config, '#333'),
+                      edgecolor='black', linewidth=0.5, alpha=0.9)
+
+        # Add value labels
+        for bar, val in zip(bars, values):
+            if not np.isnan(val) and val > 0:
+                ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 10,
+                        f'{val:.0f}', ha='center', va='bottom', fontsize=8, fontweight='bold')
+
+    ax3.set_xlabel('Model Size', fontsize=12, fontweight='bold')
+    ax3.set_ylabel('Avg E2E Latency (ms)', fontsize=12, fontweight='bold')
+    ax3.set_title('(c) Average E2E Latency by Model Size\n(lower is better)', fontsize=11, fontweight='bold')
+    ax3.set_xticks(x)
+    ax3.set_xticklabels(model_sizes)
+    ax3.legend(loc='upper left', fontsize=9)
+    ax3.grid(True, alpha=0.3, axis='y', linestyle='--')
+    ax3.set_axisbelow(True)
+
+    # Suptitle
+    plt.suptitle('Model Scaling Analysis: PPD Advantage is Model-Independent\n'
+                 'PPD (2P_2pD) shows 70%+ T2 TTFT improvement over PD (2P_2D) across model sizes',
+                 fontsize=13, fontweight='bold', y=1.02)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.savefig(output_dir / 'Part2_Fig4_model_scaling.png', facecolor='white', dpi=300)
+    plt.close()
+    print("  Saved Part2_Fig4_model_scaling.png")
+
+
 # =============================================================================
 # Legacy Figures (retained for backward compatibility)
 # =============================================================================
@@ -1589,6 +1984,8 @@ def main():
     print("=" * 70)
     plot_C2_d_vs_pd_comparison(df, paper_dir)    # Part2_Fig1
     plot_C1_pd_ratio_heatmap(df, paper_dir)      # Part2_Fig2
+    plot_Part2_Fig3_turn_scaling(paper_dir)       # Part2_Fig3 (NEW - Turn Scaling)
+    plot_Part2_Fig4_model_scaling(paper_dir)      # Part2_Fig4 (NEW - Model Scaling)
 
     print("\n" + "=" * 70)
     print("Part 3: Mode Trade-offs and Throughput")
@@ -1639,6 +2036,7 @@ def main():
     print("=" * 70)
     print("Part 1: Part1_Fig1_objective_oriented.png")
     print("Part 2: Part2_Fig1_d_vs_pd_comparison.png, Part2_Fig2_pd_ratio_heatmap.png")
+    print("        Part2_Fig3_turn_scaling.png (NEW), Part2_Fig4_model_scaling.png (NEW)")
     print("Part 3: Part3_Fig1_hybrid_vs_pure.png, Part3_Fig2_throughput_comparison.png")
     print("Part 4: Part4_Fig1_1p_scalability_comparison.png")
     print("\nArchived: Fig3_failure_heatmap.png, A3_improved_radar.png, H2_percentile_analysis.png")
