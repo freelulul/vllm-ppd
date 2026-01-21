@@ -1,33 +1,41 @@
-# vLLM Disaggregated Serving Optimizer
+# vLLM Disaggregated Serving Optimizer (PPD)
 
-Dynamic request routing optimizer for multi-turn LLM inference across heterogeneous GPU pools.
+Dynamic request router for multi-turn LLM inference that intelligently routes requests across different GPU configurations based on workload characteristics.
 
 ---
 
 ## Project Overview
 
-### Core Idea
+### Core Insight
 
-Modern LLM serving systems face a fundamental trade-off between **resource efficiency** (separating prefill and decode) and **latency overhead** (KV cache transfer). This project explores how to **dynamically route requests** across a heterogeneous GPU pool based on workload characteristics.
+In multi-turn conversations, subsequent user inputs should not always be treated as prefill work:
+- **High cache rate + short new input** → should go directly to decode machine (decode-like)
+- **Low cache rate + long new input** → should go back to prefill machine (prefill-like)
 
-**The central hypothesis**: Different workload patterns (conversation length, I/O ratio, context size) favor different serving strategies. Rather than picking one mode globally, we can achieve better performance by routing each request to the optimal execution path.
+This project explores the trade-offs between different GPU configurations and routing strategies.
 
-### Four Execution Modes
+### Machine Type Definitions
 
-| Mode | Description | Turn 1 | Turn 2+ | Trade-off |
-|------|-------------|--------|---------|-----------|
-| **PD** | Full disaggregation | P→D (KV transfer) | P→D (KV transfer) | Isolation ✓, Transfer overhead ✗ |
-| **PPD** | Prefix-aware PD | P→D (KV transfer) | D-direct (prefix cache) | No transfer ✓, Less isolation ✗ |
-| **Replica** | Data parallelism | Worker X | Worker X (prefix cache) | Double capacity ✓, No isolation ✗ |
-| **Optimizer** | Rule-based routing | Adaptive | Adaptive | Best of all modes ✓ |
+| Type | Full Name | Capability | Use Case |
+|------|-----------|------------|----------|
+| **P** | Prefill-only | Can only do prefill | PD/PPD mode Turn 1 |
+| **D** | Decode-only | Can only do decode (receives KV from P) | PD mode |
+| **pD** | Prefill-capable Decode | Can do append_prefill and decode | PPD mode (T2+ direct) |
+| **PD/R** | Replica/Normal Server | Full model, can do both | Replica mode |
 
-### Optimizer: Rule-Based Request Router
+### Key Distinction: D vs pD
 
-The Optimizer mode implements intelligent request routing using a rule-based selector that dynamically chooses between PD, PPD, and Replica modes based on:
+Both are `kv_consumer` role in vLLM, but:
+- **D (Decode-only)**: Receives KV every turn, cannot process new input locally
+- **pD (Prefill-capable Decode)**: Can process new input tokens locally via `append_prefill`
 
-1. **Hybrid Architecture**: Uses PD for heavy prefill (input_tokens > 1024), PPD for light prefill
-2. **Load-Aware Routing**: Routes to Replica when both P and D servers are busy
-3. **E2E SLO Consideration**: Factors in end-to-end latency requirements
+### Execution Modes
+
+| Mode | GPU Config | Turn 1 | Turn 2+ | Trade-off |
+|------|-----------|--------|---------|-----------|
+| **PD** | P→D | P prefill → KV transfer → D decode | Same path every turn | Isolation ✓, Transfer overhead ✗ |
+| **PPD** | P→pD | P prefill → KV transfer → pD decode | pD-direct (prefix cache) | No T2+ transfer ✓, Less isolation ✗ |
+| **Replica** | PD/R | Any worker | Same worker (prefix cache) | High throughput ✓, No isolation ✗ |
 
 ---
 
@@ -36,89 +44,77 @@ The Optimizer mode implements intelligent request routing using a rule-based sel
 ```
 ppd/
 ├── src/                              # Core source code
-│   ├── benchmark_common.py           # Shared benchmark utilities
-│   ├── benchmark_pd.py               # PD mode benchmark
-│   ├── benchmark_ppd.py              # PPD mode benchmark
-│   ├── benchmark_replica.py          # Replica mode benchmark
-│   ├── disagg_proxy_ppd_4gpu.py      # PD/PPD proxy with cache affinity
-│   ├── replication_proxy_4gpu.py     # Replication proxy (4 workers)
-│   └── simple_replica_proxy.py       # Simple replica load balancer
+│   ├── comprehensive_proxy.py        # Unified proxy for all 17 configs
+│   └── config.py                     # Configuration management
+│
+├── optimizer/                        # Optimizer module (NEW)
+│   ├── __init__.py
+│   ├── core/                         # Core components
+│   │   ├── routing_engine.py         # Workload classification & routing
+│   │   ├── evaluate.py               # SLO evaluation framework
+│   │   └── oracle_simulation.py      # Theoretical upper bound
+│   ├── runners/                      # Execution runners
+│   │   ├── run_baselines.py          # Run single baseline config
+│   │   ├── run_conv_level.py         # Conversation-level optimizer
+│   │   └── run_optimizer.py          # Legacy per-turn optimizer
+│   ├── data/
+│   │   └── prepare_dataset.py        # Dataset preparation
+│   ├── visualization/
+│   │   ├── plot_results.py           # General plotting
+│   │   └── plot_slo_curves.py        # SLO attainment curves
+│   ├── scripts/
+│   │   ├── sbatch_full_baselines.sh  # Run all 17 baselines
+│   │   └── run_full_validation.sh    # Full validation pipeline
+│   └── archive/                      # Old optimizer code
+│
 ├── scripts/
-│   ├── server/                       # Server management scripts
-│   │   ├── start_servers_4gpu.sh     # Start 2P+2D servers
-│   │   ├── stop_servers_4gpu.sh      # Stop PD/PPD servers
-│   │   ├── start_replication_servers_4gpu.sh  # Start 4 replicas
-│   │   ├── stop_replication_servers_4gpu.sh   # Stop replicas
-│   │   └── start_optimizer_servers.sh         # Start optimizer (1P+1D+2R)
-│   ├── benchmark/                    # Benchmark job scripts
-│   │   ├── sbatch_pd.sh              # SLURM job for PD benchmark
-│   │   ├── sbatch_ppd.sh             # SLURM job for PPD benchmark
-│   │   ├── sbatch_replica.sh         # SLURM job for Replica benchmark
-│   │   └── submit_all.sh             # Submit all benchmark jobs
-│   ├── analysis/                     # Analysis and visualization
-│   │   ├── comprehensive_analysis.py # Full benchmark analysis
-│   │   ├── generate_trend_data.py    # Generate SLO trend data
-│   │   ├── merge_results.py          # Merge benchmark results
-│   │   └── plot_trend_figures.py     # Generate publication figures
-│   └── tests/                        # Test scripts
-│       ├── test_decode_standalone.py # Test D server standalone capability
-│       ├── test_mode_switching_cost.py        # Mode switching cost analysis
-│       ├── test_optimizer_comparison.py       # 4-mode comparison test
-│       ├── test_optimizer_value.py            # Optimizer value demonstration
-│       ├── test_production_scenario.py        # Production scenario tests
-│       └── verify_mode_switching.py           # Verify PD/PPD switching
-├── optimizer/                        # Optimizer module
-│   ├── improved_selector.py          # Hybrid mode selection (lookup + model)
-│   ├── optimizer_router.py           # Request routing logic
-│   └── metrics_collector.py          # Performance metrics collection
-├── docs/                             # Documentation
-│   ├── SLO_TEST_ANALYSIS.md          # Comprehensive SLO test analysis
-│   ├── Cache_Mechanism_Analysis.md   # Cache mechanism deep analysis
-│   ├── KV_CACHE_ARCHITECTURE_ANALYSIS.md  # KV cache architecture
-│   ├── OPTIMIZER_ROUTER_DESIGN.md    # Optimizer design documentation
-│   ├── TRADEOFF_ANALYSIS.md          # Mode trade-off analysis
-│   ├── BENCHMARK.md                  # Benchmark methodology
-│   └── notes.md                      # Development notes
+│   ├── server/                       # Server management (17 configs)
+│   │   ├── start_<CONFIG>.sh         # Start specific config
+│   │   ├── stop.sh                   # Unified stop
+│   │   ├── cleanup_all.sh            # Force cleanup
+│   │   └── config.sh                 # Shell configuration
+│   ├── benchmark/                    # Benchmarking
+│   │   ├── comprehensive_benchmark.py
+│   │   ├── model_scaling_benchmark.py
+│   │   └── turn_scaling_benchmark.py
+│   ├── analysis/                     # Analysis & visualization
+│   │   └── plot_tradeoff.py
+│   └── tests/                        # Test suites
+│
 ├── results/                          # Benchmark results
-│   ├── pd/                           # PD mode results
-│   ├── ppd/                          # PPD mode results
-│   ├── replica/                      # Replica mode results
-│   ├── final/                        # Merged final results
-│   ├── trend_data.json               # SLO trend data
-│   └── production_scenario.json      # Production scenario results
-├── figures/                          # Generated figures
-│   └── fig1-fig7.png/pdf             # Publication figures
-└── logs/                             # Server logs
+│   ├── comprehensive/                # 17 configs × 18 workloads × 10 QPS
+│   ├── model_scaling/                # 8B, 14B model comparisons
+│   ├── turn_scaling/                 # 2, 4, 8, 16 turn experiments
+│   └── optimizer/                    # Optimizer validation results
+│       ├── baselines/                # All 17 baseline results
+│       ├── dataset/                  # Prepared validation dataset
+│       └── figures/                  # Generated visualizations
+│
+├── docs/                             # Documentation
+├── logs/                             # Server logs
+└── data/                             # Datasets
 ```
 
 ---
 
-## Key Results
+## GPU Configuration Space (17 Configurations)
 
-### SLO Attainment Comparison (4 Modes)
+### Pure Modes
 
-| Mode | QPS=4 | QPS=8 | QPS=16 | QPS=32 |
-|------|-------|-------|--------|--------|
-| **PD** | 66.7% | 66.7% | 66.7% | 65.0% |
-| **PPD** | 100.0% | 98.3% | 78.3% | 66.7% |
-| **Replica** | 100.0% | 100.0% | 86.7% | 71.7% |
-| **Optimizer** | 100.0% | 100.0% | 95.0% | 80.0% |
+| Category | Configurations | Description |
+|----------|---------------|-------------|
+| **Replica** | 4R | 4 full replicas |
+| **Pure PD** | 1P_3D, 2P_2D, 3P_1D | Prefill + Decode only |
+| **Pure PPD** | 1P_3pD, 2P_2pD, 3P_1pD | Prefill + Prefill-capable Decode |
 
-### Key Findings
+### Mixed & Hybrid Modes
 
-1. **Optimizer achieves highest SLO attainment** across all QPS levels
-2. **PPD excels at low-medium QPS** (≤8 QPS): Near-perfect SLO attainment
-3. **Replica scales better at high QPS** (>16 QPS): Double capacity advantage
-4. **PD shows consistent but limited performance**: ~66% baseline regardless of load
-
-### Trade-off Insights
-
-| Factor | PD | PPD | Replica | Optimizer |
-|--------|-----|-----|---------|-----------|
-| Turn 2 TTFT | Worst | Best | Good | Adaptive |
-| High QPS capacity | Medium | Low | High | High |
-| E2E latency focus | Poor | Good | Best | Best |
-| Resource isolation | Best | Medium | None | Adaptive |
+| Category | Configurations | Description |
+|----------|---------------|-------------|
+| **Mixed PD/PPD** | 1P_2D_1pD, 1P_1D_2pD, 2P_1D_1pD | Mix of D and pD |
+| **Hybrid (R+PD)** | 1R_1P_2D, 1R_2P_1D, 2R_1P_1D | Replica + PD |
+| **Hybrid (R+PPD)** | 1R_1P_2pD, 1R_2P_1pD, 2R_1P_1pD | Replica + PPD |
+| **Hybrid (R+Mixed)** | 1R_1P_1D_1pD | Replica + Mixed |
 
 ---
 
@@ -131,191 +127,265 @@ conda activate vllm-ppd
 cd /net/projects2/ds3lab/zongzel/vllm/ppd
 ```
 
-### Start Optimizer Servers (1P + 1D + 2 Replica)
+### Starting Servers
 
 ```bash
-./scripts/server/start_optimizer_servers.sh
-# Wait for "All Optimizer Servers Ready!" message
+# Start any of the 17 configurations
+./scripts/server/start_<CONFIG>.sh
 
-# Check status
-curl -s http://localhost:10001/mode   # PD/PPD proxy
-curl -s http://localhost:10002/status # Replica proxy
+# Examples:
+./scripts/server/start_2P_2D.sh      # Pure PD mode
+./scripts/server/start_2P_2pD.sh     # Pure PPD mode
+./scripts/server/start_1R_1P_2pD.sh  # Hybrid (1 Replica + PPD)
+./scripts/server/start_4R.sh         # Pure Replica
 ```
 
-### Run SLO Test
+### Stopping Servers
 
 ```bash
-# Generate trend data across 4 dimensions
-python scripts/analysis/generate_trend_data.py
-
-# Run production scenario tests
-python scripts/tests/test_production_scenario.py
-
-# Generate publication figures
-python scripts/analysis/plot_trend_figures.py
-```
-
-### Run Full Benchmark Suite
-
-```bash
-# Submit all benchmark jobs (SLURM)
-./scripts/benchmark/submit_all.sh
-
-# Or run individually
-sbatch scripts/benchmark/sbatch_ppd.sh 1
-sbatch scripts/benchmark/sbatch_pd.sh 1
-sbatch scripts/benchmark/sbatch_replica.sh 1
-
-# Merge results after completion
-python scripts/analysis/merge_results.py
-```
-
----
-
-## Server Configurations
-
-### PD/PPD Mode (2P + 2D, 4 GPUs)
-
-```
-GPU 0: Prefill 0 (P0) - port 8100
-GPU 1: Prefill 1 (P1) - port 8101
-GPU 2: Decode 0 (D0)  - port 8200
-GPU 3: Decode 1 (D1)  - port 8201
-Proxy: port 10001
-```
-
-### Replica Mode (4 Workers)
-
-```
-GPU 0: Worker 0 - port 8300
-GPU 1: Worker 1 - port 8400
-GPU 2: Worker 2 - port 8500
-GPU 3: Worker 3 - port 8600
-Proxy: port 10002
-```
-
-### Optimizer Mode (1P + 1D + 2R)
-
-```
-GPU 0: Prefill (P)  - port 8100
-GPU 1: Decode (D)   - port 8200
-GPU 2: Replica 0    - port 8300
-GPU 3: Replica 1    - port 8400
-PD/PPD Proxy: port 10001
-Replica Proxy: port 10002
-```
-
----
-
-## Workload Design
-
-### Benchmark Workloads
-
-| Context | Input Tokens | Output Tokens | Use Case |
-|---------|-------------|---------------|----------|
-| XS | 128 | 64/256/512 | Quick chat |
-| S | 256 | 64/256/512 | Standard chat |
-| M | 512 | 64/256/512 | Medium context |
-| L | 1024 | 64/256/512 | Long context |
-| XL | 2048 | 64/256/512 | Document analysis |
-
-### Multi-Turn Protocol
-
-**Turn 1**: Initial request through full P→D flow (establishes KV cache)
-**Turn 2**: Subsequent request (measures cache efficiency)
-- PD: Always goes through P→D
-- PPD: Direct to D using prefix cache
-- Replica: Same worker using local cache
-
-### Metrics
-
-- **TTFT**: Time to First Token
-- **TPOT**: Time Per Output Token
-- **E2E**: End-to-End latency
-- **SLO Attainment**: % requests meeting latency target
-
----
-
-## Analysis and Visualization
-
-### Generated Figures (in `figures/`)
-
-| Figure | Description |
-|--------|-------------|
-| fig1 | QPS vs SLO Attainment (4 modes) |
-| fig2 | E2E Ratio vs SLO Attainment |
-| fig3 | SLO Strictness vs Attainment |
-| fig4 | Input Length vs SLO Attainment |
-| fig5 | Production Scenarios Bar Chart |
-| fig6 | Mode Comparison Radar Chart |
-| fig7 | Summary Dashboard |
-
-### Key Documents
-
-- `docs/SLO_TEST_ANALYSIS.md`: Comprehensive SLO test analysis with quantitative results
-- `docs/Cache_Mechanism_Analysis.md`: Deep dive into cache mechanisms across modes
-- `docs/KV_CACHE_ARCHITECTURE_ANALYSIS.md`: Why PPD succeeds where PD fails
-- `docs/TRADEOFF_ANALYSIS.md`: Mode trade-off analysis with recommendations
-
----
-
-## API Endpoints
-
-### PD/PPD Proxy (port 10001)
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/v1/completions` | POST | Inference endpoint |
-| `/v1/chat/completions` | POST | Chat inference |
-| `/mode` | GET | Get current mode |
-| `/mode/pd` | POST | Switch to PD mode |
-| `/mode/ppd` | POST | Switch to PPD mode |
-| `/conversations` | GET | List active conversations |
-| `/conversations/clear` | POST | Clear conversation state |
-| `/status` | GET | Server status |
-
-### Replica Proxy (port 10002)
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/v1/completions` | POST | Inference endpoint |
-| `/v1/chat/completions` | POST | Chat inference |
-| `/status` | GET | Proxy status and metrics |
-| `/metrics/clear` | POST | Clear metrics |
-
----
-
-## Troubleshooting
-
-### Check Server Logs
-
-```bash
-tail -f logs/prefill.log    # Prefill server
-tail -f logs/decode.log     # Decode server
-tail -f logs/proxy.log      # PD/PPD proxy
-tail -f logs/replica*.log   # Replica workers
-```
-
-### Stop All Servers
-
-```bash
-./scripts/server/stop_servers_4gpu.sh
-./scripts/server/stop_replication_servers_4gpu.sh
+./scripts/server/stop.sh
 # Or forcefully:
-pkill -f "vllm serve"
-pkill -f proxy
+pkill -f "vllm serve" && pkill -f proxy
 ```
 
-### NCCL Issues
+---
 
-First request may take 2-3 seconds due to NCCL initialization. Warmup is included in benchmarks to avoid affecting results.
+## Optimizer Validation (NEW)
+
+### Design: Conversation-Level + Oracle Simulation
+
+The optimizer uses **full 17 configurations** as baselines for fair comparison.
+
+**Key Design Decision**: Route entire conversation to ONE config (preserves cache affinity) instead of per-turn routing (which breaks cache benefits).
+
+### Running Optimizer Validation
+
+```bash
+# 1. Prepare dataset (50 multi-turn conversations)
+python -m optimizer.data.prepare_dataset \
+    --output results/optimizer/dataset/prepared_dataset.json
+
+# 2. Run all 17 baselines (SLURM job, ~6-8 hours)
+sbatch optimizer/scripts/sbatch_full_baselines.sh
+
+# 3. Run oracle simulation (theoretical upper bound)
+python -m optimizer.core.oracle_simulation \
+    --dataset results/optimizer/dataset/prepared_dataset.json \
+    --baselines results/optimizer/baselines \
+    --output results/optimizer/oracle_results.json
+
+# 4. Run conversation-level optimizer
+python -m optimizer.runners.run_conv_level \
+    --dataset results/optimizer/dataset/prepared_dataset.json \
+    --benchmark results/comprehensive \
+    --output results/optimizer/conv_level_results.json
+
+# 5. Evaluate
+python -m optimizer.core.evaluate \
+    --conv-level results/optimizer/conv_level_results.json \
+    --oracle results/optimizer/oracle_results.json \
+    --baselines results/optimizer/baselines \
+    --output results/optimizer/evaluation.json
+
+# 6. Visualize
+python -m optimizer.visualization.plot_slo_curves \
+    --conv-level results/optimizer/conv_level_results.json \
+    --oracle results/optimizer/oracle_results.json \
+    --baselines results/optimizer/baselines \
+    --output results/optimizer/figures/slo_attainment_full.png
+```
+
+### Expected Results
+
+| Method | SLO Scale=0.5 | 1.0 | 1.5 | 2.0 |
+|--------|--------------|-----|-----|-----|
+| **Oracle** | ~65% | ~92% | ~98% | ~99% |
+| **Conv-Level** | ~55% | ~85% | ~95% | ~98% |
+| Best Single Baseline | ~50% | ~78% | ~92% | ~97% |
+
+Key insight: Oracle in T2+ selects PPD configs far more than T1, validating PPD's value in subsequent turns.
+
+---
+
+## PPD Core Testing (NEW)
+
+### Goal
+
+Validate PPD mode's value on real datasets, demonstrating:
+1. Turn 2+ TTFT improvement (~65-75%)
+2. SLO attainment rate curves (DistServe style)
+3. Latency-throughput Pareto frontier
+4. Multi-turn stability
+
+**Core thesis**: PPD opens up a new space in the latency-throughput trade-off.
+
+### Datasets
+
+| Dataset | Characteristic | Use Case |
+|---------|---------------|----------|
+| **ShareGPT** | 74.9% decode-heavy | Typical chat workloads |
+| **WildChat** (prefill-heavy filtered) | 30.6% prefill-heavy | Stress test PPD TPOT |
+
+### Full Benchmark (17 configs × 2 datasets)
+
+```bash
+# Submit all 8 batches (sequential, 4h each)
+./scripts/benchmark/submit_sharegpt_benchmarks.sh
+
+# Or submit specific batches
+./scripts/benchmark/submit_sharegpt_benchmarks.sh 1 2 3
+
+# Monitor progress
+squeue -u $USER
+
+# After completion, merge results
+python scripts/benchmark/merge_sharegpt_results.py
+```
+
+**Batch Configuration**:
+- Batch 1: 4R, 1P_3D
+- Batch 2: 1P_2D_1pD, 1P_1D_2pD
+- Batch 3: 1P_3pD, 2P_2D
+- Batch 4: 2P_1D_1pD, 2P_2pD
+- Batch 5: 3P_1D, 3P_1pD
+- Batch 6: 1R_1P_2D, 1R_1P_2pD
+- Batch 7: 1R_2P_1D, 1R_2P_1pD
+- Batch 8: 2R_1P_1D, 2R_1P_1pD
+
+### Quick Test (Single Config)
+
+```bash
+# ShareGPT (decode-heavy)
+python scripts/benchmark/sharegpt_benchmark.py \
+    --config 2P_2D \
+    --num-conversations 100 \
+    --qps 2 4 8
+
+# WildChat (prefill-heavy)
+python scripts/benchmark/sharegpt_benchmark.py \
+    --config 2P_2D \
+    --num-conversations 100 \
+    --qps 2 4 8 \
+    --sharegpt-path data/WildChat_1M.json \
+    --output-dir results/wildchat
+```
+
+### Dynamic PPD Mode
+
+Enable PPD routing decisions on PD configs based on benchmark data:
+
+```bash
+# Start proxy with dynamic PPD mode
+python src/comprehensive_proxy.py \
+    --config 2P_2D \
+    --enable-ppd-mode \
+    --ppd-benchmark-path results/comprehensive
+```
+
+The PPD Decision Engine (`optimizer/ppd_decision_engine.py`) uses **weighted multi-metric scoring**:
+```python
+score = w_ttft * TTFT_improvement - w_tpot * TPOT_degradation
+use_ppd = score > 0
+```
+
+Decision factors:
+- **context_length**: small (≤512), large (512-4096), huge (>4096 extrapolated)
+- **input_tokens**: New tokens in current turn
+- **output_tokens**: Expected output tokens
+- **current_qps**: System load
+
+### Generating Analysis Figures
+
+```bash
+# ShareGPT analysis
+python scripts/analysis/ppd_analysis.py \
+    --dataset-dir results/sharegpt \
+    --output-dir results/analysis/figures/sharegpt
+
+# WildChat analysis
+python scripts/analysis/ppd_analysis.py \
+    --dataset-dir results/wildchat \
+    --output-dir results/analysis/figures/wildchat
+```
+
+**Generated figures (7 total)**:
+- `fig1_t2_ttft_comparison.png`: Turn 2+ TTFT box plot
+- `fig2_slo_attainment_ttft.png`: Legacy SLO attainment curves
+- `fig3_pareto_frontier.png`: Latency vs throughput trade-off
+- `fig4_turn_stability.png`: TTFT stability across turns
+- `fig5_ppd_improvement.png`: PPD improvement percentage
+- `fig6_slo_combined.png`: **3×2 SLO grid** (TTFT/TPOT/E2E × Scale/Rate)
+- `fig7_metrics_table.png`: **Full metrics summary table** (p50/p90/p99/avg)
+
+---
+
+## Benchmark System
+
+### Comprehensive Benchmark
+
+```bash
+# Run benchmark for specific config
+python scripts/benchmark/comprehensive_benchmark.py \
+    --config 2P_2pD \
+    --workload all \
+    --qps 1 2 4 8
+
+# Submit SLURM batch jobs
+./scripts/benchmark/submit_comprehensive.sh
+```
+
+### Workload Matrix
+
+**T1 Configurations**: small (128→128), large (1024→1024)
+
+**T2 Configurations** (9 types):
+| Type | Input→Output | Characteristic |
+|------|--------------|----------------|
+| tiny | 16→32 | Minimal overhead |
+| short_gen | 32→256 | Short question, long answer |
+| long_gen | 32→512 | Very long answer |
+| big_paste | 512→64 | Prefill-heavy |
+| huge_paste | 1024→32 | Extreme prefill-heavy |
+
+**Total**: 2 T1 × 9 T2 = 18 workloads × 10 QPS levels × 17 configs
+
+---
+
+## Key Metrics
+
+| Metric | Description |
+|--------|-------------|
+| **TTFT** | Time to First Token (critical for responsiveness) |
+| **TPOT** | Time Per Output Token (affects streaming quality) |
+| **E2E** | End-to-End latency (total request time) |
+| **SLO Attainment** | % of requests meeting latency target |
+
+### Weight Profiles for Objectives
+
+| Objective | TTFT Weight | TPOT Weight | E2E Weight |
+|-----------|------------|------------|-----------|
+| ttft | 0.70 | 0.10 | 0.20 |
+| tpot | 0.10 | 0.70 | 0.20 |
+| e2e | 0.20 | 0.20 | 0.60 |
+
+---
+
+## Port Assignments
+
+| Component | Port |
+|-----------|------|
+| Comprehensive Proxy | 10001 |
+| Replica Proxy (4R only) | 10002 |
+| Prefill servers | 8100-8101 |
+| Decode servers | 8200-8201 |
+| Replica workers | 8300-8600 |
 
 ---
 
 ## Hardware
 
-- **Tested on**: 4x A100 80GB GPUs
-- **Model**: Llama-3.1-8B
+- **GPUs**: 4x H100 80GB
+- **Model**: Llama-3.1-8B (primary), Llama-3.1-14B (scaling)
 - **vLLM Version**: v0.13.0rc2
 
 ---

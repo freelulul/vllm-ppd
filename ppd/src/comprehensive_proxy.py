@@ -12,15 +12,21 @@ Key features:
 - Cache affinity for multi-turn conversations
 - Flexible routing based on server types (P, D, pD, R)
 - Statistics collection
+- Dynamic PPD mode: Uses benchmark data to decide when PPD is beneficial
 
 Usage:
     python comprehensive_proxy.py --config 2P_2D --http-port 10001 --zmq-port 30001
+
+    # With dynamic PPD mode:
+    python comprehensive_proxy.py --config 2P_2D --enable-ppd-mode --ppd-benchmark-path results/comprehensive
 """
 
 import argparse
 import hashlib
+import logging
 import os
 import socket
+import sys
 import threading
 import time
 import uuid
@@ -30,6 +36,10 @@ import aiohttp
 import msgpack
 import zmq
 from quart import Quart, request, Response
+
+# Add project root to path for optimizer imports
+PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_DIR)
 
 
 # Global state - instances by type
@@ -58,6 +68,7 @@ stats = {
     "pd_requests": 0,
     "ppd_requests": 0,
     "ppd_direct_requests": 0,
+    "ppd_dynamic_requests": 0,  # PPD mode enabled by dynamic decision engine
     "replica_requests": 0,
     "cache_affinity_hits": 0,
     "cache_affinity_misses": 0,
@@ -68,6 +79,12 @@ stats_lock = threading.Lock()
 CONFIG_NAME = "2P_2D"
 CONVERSATION_TTL = 3600
 DEFAULT_PING_SECONDS = 5
+
+# Dynamic PPD mode configuration
+ENABLE_PPD_MODE = False
+PPD_DECISION_ENGINE = None
+PPD_DECISION_LOG: List[dict] = []  # Log of PPD decisions for analysis
+PPD_LOG_LOCK = threading.Lock()
 
 # Static configuration for replica ports (replicas don't use ZMQ registration)
 REPLICA_PORTS_BY_CONFIG = {
@@ -235,6 +252,95 @@ def register_static_replicas():
             print(f"[PROXY] Add [R] HTTP:{http_addr} (static)")
 
 
+def estimate_token_count(text: str) -> int:
+    """Estimate token count from text (rough approximation: ~4 chars per token)."""
+    if not text:
+        return 0
+    return len(text) // 4
+
+
+def extract_request_features(data: dict) -> Tuple[int, int, int]:
+    """Extract request features for PPD decision.
+
+    Returns:
+        (input_tokens, output_tokens, context_tokens)
+        - input_tokens: Estimated new tokens in current turn
+        - output_tokens: max_tokens parameter (expected output)
+        - context_tokens: Estimated tokens from conversation history
+    """
+    # Get output tokens from max_tokens parameter
+    output_tokens = data.get("max_tokens", 128)
+    if "max_completion_tokens" in data:
+        output_tokens = data.get("max_completion_tokens", output_tokens)
+
+    # Extract prompt/messages
+    if "messages" in data:
+        messages = data.get("messages", [])
+        # Count context from previous messages
+        context_tokens = 0
+        current_input_tokens = 0
+        for i, msg in enumerate(messages):
+            content = msg.get("content", "")
+            tokens = estimate_token_count(content)
+            if i == len(messages) - 1 and msg.get("role") == "user":
+                current_input_tokens = tokens
+            else:
+                context_tokens += tokens
+        return current_input_tokens, output_tokens, context_tokens
+    else:
+        prompt = data.get("prompt", "")
+        if isinstance(prompt, list):
+            prompt = " ".join(str(p) for p in prompt)
+
+        # For continuation prompts, estimate based on "User:" markers
+        # The last "User:" section is the new input, everything before is context
+        if "User:" in prompt:
+            parts = prompt.rsplit("User:", 1)
+            if len(parts) == 2:
+                context_part = parts[0]
+                current_part = parts[1]
+                # Find where the current input ends (at "Assistant:" or end)
+                if "Assistant:" in current_part:
+                    current_part = current_part.split("Assistant:", 1)[0]
+                context_tokens = estimate_token_count(context_part)
+                current_input_tokens = estimate_token_count(current_part)
+                return current_input_tokens, output_tokens, context_tokens
+
+        # Fallback: treat entire prompt as context + small input
+        total_tokens = estimate_token_count(prompt)
+        return min(total_tokens, 256), output_tokens, max(0, total_tokens - 256)
+
+
+def log_ppd_decision(
+    conv_hash: str,
+    turn: int,
+    input_tokens: int,
+    output_tokens: int,
+    context_tokens: int,
+    decision: bool,
+    routing_mode: str,
+):
+    """Log a PPD decision for later analysis."""
+    global PPD_DECISION_LOG
+
+    entry = {
+        "timestamp": time.time(),
+        "conv_hash": conv_hash[:8],
+        "turn": turn,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "context_tokens": context_tokens,
+        "ppd_decision": decision,
+        "actual_mode": routing_mode,
+    }
+
+    with PPD_LOG_LOCK:
+        PPD_DECISION_LOG.append(entry)
+        # Keep only last 10000 entries
+        if len(PPD_DECISION_LOG) > 10000:
+            PPD_DECISION_LOG = PPD_DECISION_LOG[-10000:]
+
+
 def get_conversation_hash(data: dict) -> str:
     """Generate a hash to identify a conversation."""
     if "messages" in data:
@@ -302,13 +408,26 @@ def update_conversation(
 def select_servers(
     conv_hash: str,
     current_turn: int,
-    assigned: Dict[str, str]
+    assigned: Dict[str, str],
+    use_ppd_dynamic: bool = False,
 ) -> Tuple[Optional[str], Optional[str], Optional[str], str]:
     """
     Select servers based on configuration and cache affinity.
 
+    Args:
+        conv_hash: Conversation hash for cache affinity
+        current_turn: Current turn number (1, 2, 3, ...)
+        assigned: Previously assigned servers for this conversation
+        use_ppd_dynamic: If True, enable PPD mode for Turn 2+ even on D servers
+                         (determined by PPD decision engine)
+
     Returns: (prefill_addr, decode_addr, replica_addr, routing_mode)
-    routing_mode: "pd", "ppd", "ppd_direct", "replica"
+    routing_mode: "pd", "ppd", "ppd_direct", "ppd_dynamic", "replica"
+    - "pd": Standard prefill-decode mode with KV transfer every turn
+    - "ppd": PPD mode Turn 1 (KV transfer to pD server)
+    - "ppd_direct": PPD mode Turn 2+ (direct to pD, uses prefix cache)
+    - "ppd_dynamic": Dynamic PPD mode (Turn 2+ direct to D, decision engine enabled)
+    - "replica": Request routed to replica server
 
     Routing Strategy:
     1. Pure Replica (4R): All requests to replica, hash-based selection
@@ -316,6 +435,7 @@ def select_servers(
     3. Hybrid (1R_1P_2pD, etc.): Distribute requests between replica and disagg
        - Use conversation hash to deterministically assign mode
        - Once assigned, cache affinity keeps same mode for Turn 2+
+    4. Dynamic PPD: When enabled, Turn 2+ requests can bypass prefill even on D servers
     """
     prefill_addr = None
     decode_addr = None
@@ -337,14 +457,15 @@ def select_servers(
     has_replica = len(replica_list) > 0
 
     # Check if this conversation already has an assigned mode
+    cache_affinity_hit = False
     if assigned:
         if assigned.get("replica") and assigned["replica"] in replica_list:
             # Continue with replica mode
             routing_mode = "replica"
             replica_addr = assigned["replica"]
-            return prefill_addr, decode_addr, replica_addr, routing_mode
+            cache_affinity_hit = True
 
-        if assigned.get("decode"):
+        elif assigned.get("decode"):
             # Continue with disagg mode
             all_decode = decode_list + ppd_list
             if assigned["decode"] in all_decode:
@@ -358,70 +479,77 @@ def select_servers(
                     routing_mode = "ppd_direct" if current_turn > 1 else "ppd"
                 else:
                     routing_mode = "pd"
-                return prefill_addr, decode_addr, replica_addr, routing_mode
+                cache_affinity_hit = True
 
-    # New conversation - determine routing mode
-    if has_replica and not has_prefill and not has_decode:
-        # Pure replica mode (4R)
-        routing_mode = "replica"
-        idx = hash(conv_hash) % len(replica_list)
-        replica_addr = replica_list[idx]
-
-    elif has_prefill and has_decode and not has_replica:
-        # Pure disaggregated mode (1P_3D, 2P_2pD, 1P_2D_1pD, etc.)
-        # Select prefill
-        idx = hash(conv_hash) % len(prefill_list)
-        prefill_addr = prefill_list[idx]
-
-        # Select decode - distribute across ALL decode servers (D + pD) by capacity
-        # This ensures mixed configs like 1P_2D_1pD use all 3 servers, not just pD
-        all_decode = decode_list + ppd_list
-        decode_idx = hash(conv_hash) % len(all_decode)
-        decode_addr = all_decode[decode_idx]
-
-        if decode_addr in ppd_list:
-            routing_mode = "ppd"
-        else:
-            routing_mode = "pd"
-
-    elif has_prefill and has_decode and has_replica:
-        # Hybrid mode (1R_1P_2pD, 2R_1P_1D, etc.)
-        # Distribute requests between replica and disagg based on capacity
-        # Calculate total capacity slots
-        num_replica_slots = len(replica_list)
-        all_decode = decode_list + ppd_list
-        num_disagg_slots = len(all_decode)  # One slot per decode server
-        total_slots = num_replica_slots + num_disagg_slots
-
-        # Use hash to select slot
-        slot = hash(conv_hash) % total_slots
-
-        if slot < num_replica_slots:
-            # Route to replica
+    # New conversation - determine routing mode (only if no cache affinity hit)
+    if not cache_affinity_hit:
+        if has_replica and not has_prefill and not has_decode:
+            # Pure replica mode (4R)
             routing_mode = "replica"
-            replica_addr = replica_list[slot]
-        else:
-            # Route to disagg
-            decode_idx = slot - num_replica_slots
-            if decode_idx < len(ppd_list):
-                decode_addr = ppd_list[decode_idx]
+            idx = hash(conv_hash) % len(replica_list)
+            replica_addr = replica_list[idx]
+
+        elif has_prefill and has_decode and not has_replica:
+            # Pure disaggregated mode (1P_3D, 2P_2pD, 1P_2D_1pD, etc.)
+            # Select prefill
+            idx = hash(conv_hash) % len(prefill_list)
+            prefill_addr = prefill_list[idx]
+
+            # Select decode - distribute across ALL decode servers (D + pD) by capacity
+            # This ensures mixed configs like 1P_2D_1pD use all 3 servers, not just pD
+            all_decode = decode_list + ppd_list
+            decode_idx = hash(conv_hash) % len(all_decode)
+            decode_addr = all_decode[decode_idx]
+
+            if decode_addr in ppd_list:
                 routing_mode = "ppd"
             else:
-                decode_addr = decode_list[decode_idx - len(ppd_list)]
                 routing_mode = "pd"
 
-            # Select prefill
-            prefill_addr = prefill_list[hash(conv_hash) % len(prefill_list)]
+        elif has_prefill and has_decode and has_replica:
+            # Hybrid mode (1R_1P_2pD, 2R_1P_1D, etc.)
+            # Distribute requests between replica and disagg based on capacity
+            # Calculate total capacity slots
+            num_replica_slots = len(replica_list)
+            all_decode = decode_list + ppd_list
+            num_disagg_slots = len(all_decode)  # One slot per decode server
+            total_slots = num_replica_slots + num_disagg_slots
 
-    elif has_replica:
-        # Only replica available
-        routing_mode = "replica"
-        idx = hash(conv_hash) % len(replica_list)
-        replica_addr = replica_list[idx]
+            # Use hash to select slot
+            slot = hash(conv_hash) % total_slots
+
+            if slot < num_replica_slots:
+                # Route to replica
+                routing_mode = "replica"
+                replica_addr = replica_list[slot]
+            else:
+                # Route to disagg
+                decode_idx = slot - num_replica_slots
+                if decode_idx < len(ppd_list):
+                    decode_addr = ppd_list[decode_idx]
+                    routing_mode = "ppd"
+                else:
+                    decode_addr = decode_list[decode_idx - len(ppd_list)]
+                    routing_mode = "pd"
+
+                # Select prefill
+                prefill_addr = prefill_list[hash(conv_hash) % len(prefill_list)]
+
+        elif has_replica:
+            # Only replica available
+            routing_mode = "replica"
+            idx = hash(conv_hash) % len(replica_list)
+            replica_addr = replica_list[idx]
 
     # For PPD mode, Turn 2+ goes directly to pD
     if routing_mode == "ppd" and current_turn > 1:
         routing_mode = "ppd_direct"
+
+    # Dynamic PPD mode: Turn 2+ can bypass prefill even on D servers
+    # This allows PD configs (like 2P_2D) to benefit from prefix caching
+    # when the decision engine determines it's beneficial
+    if routing_mode == "pd" and use_ppd_dynamic and current_turn > 1:
+        routing_mode = "ppd_dynamic"
 
     return prefill_addr, decode_addr, replica_addr, routing_mode
 
@@ -454,9 +582,28 @@ async def handle_request():
         # Get conversation state
         current_turn, assigned = get_conversation_info(conv_hash)
 
+        # Dynamic PPD decision
+        use_ppd_dynamic = False
+        ppd_decision = None
+        input_tokens, output_tokens, context_tokens = 0, 0, 0
+
+        if ENABLE_PPD_MODE and PPD_DECISION_ENGINE is not None:
+            # Extract request features for PPD decision
+            input_tokens, output_tokens, context_tokens = extract_request_features(data)
+
+            # Call decision engine (returns False for Turn 1)
+            ppd_decision = PPD_DECISION_ENGINE.should_use_ppd(
+                turn=current_turn + 1,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                current_qps=stats.get("total_requests", 0) / max(1, time.time() - stats.get("start_time", time.time())),
+                context_tokens=context_tokens,
+            )
+            use_ppd_dynamic = ppd_decision
+
         # Select servers
         prefill_addr, decode_addr, replica_addr, routing_mode = select_servers(
-            conv_hash, current_turn + 1, assigned
+            conv_hash, current_turn + 1, assigned, use_ppd_dynamic=use_ppd_dynamic
         )
 
         # Update conversation state
@@ -488,8 +635,22 @@ async def handle_request():
                 stats["ppd_requests"] += 1
             elif routing_mode == "ppd_direct":
                 stats["ppd_direct_requests"] += 1
+            elif routing_mode == "ppd_dynamic":
+                stats["ppd_dynamic_requests"] += 1
             elif routing_mode == "replica":
                 stats["replica_requests"] += 1
+
+        # Log PPD decision for analysis
+        if ENABLE_PPD_MODE and ppd_decision is not None:
+            log_ppd_decision(
+                conv_hash=conv_hash,
+                turn=turn_number,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                context_tokens=context_tokens,
+                decision=ppd_decision,
+                routing_mode=routing_mode,
+            )
 
         is_streaming = data.get("stream", False)
 
@@ -509,6 +670,15 @@ async def handle_request():
 
             print(f"[PROXY] PPD-Direct: turn={turn_number}, conv={conv_hash[:8]}, "
                   f"-> pD:{decode_addr}")
+
+        elif routing_mode == "ppd_dynamic":
+            # Dynamic PPD mode - direct to D (treating it like pD for Turn 2+)
+            request_id = f"ppd_dynamic_{uuid.uuid4().hex}"
+            target_url = f"http://{decode_addr}{request.path}"
+
+            print(f"[PROXY] PPD-Dynamic: turn={turn_number}, conv={conv_hash[:8]}, "
+                  f"in={input_tokens}, out={output_tokens}, ctx={context_tokens}, "
+                  f"-> D:{decode_addr}")
 
         else:
             # PD or PPD mode - need prefill first
@@ -622,8 +792,44 @@ async def get_conversations():
         }
 
 
+@app.route("/ppd-decisions", methods=["GET"])
+async def get_ppd_decisions():
+    """Get PPD decision log for analysis."""
+    with PPD_LOG_LOCK:
+        recent_decisions = PPD_DECISION_LOG[-100:]  # Last 100 decisions
+
+    # Compute summary statistics
+    total = len(recent_decisions)
+    ppd_count = sum(1 for d in recent_decisions if d.get("ppd_decision"))
+    pd_count = total - ppd_count
+
+    return {
+        "ppd_mode_enabled": ENABLE_PPD_MODE,
+        "total_logged": len(PPD_DECISION_LOG),
+        "recent_count": total,
+        "ppd_decisions": ppd_count,
+        "pd_decisions": pd_count,
+        "ppd_ratio": ppd_count / max(1, total),
+        "recent_decisions": recent_decisions,
+        "engine_stats": PPD_DECISION_ENGINE.get_decision_stats() if PPD_DECISION_ENGINE else None,
+    }
+
+
+@app.route("/ppd-performance", methods=["GET"])
+async def get_ppd_performance():
+    """Get PPD performance comparison from the decision engine."""
+    if PPD_DECISION_ENGINE is None:
+        return {"error": "PPD mode not enabled"}, 400
+
+    return {
+        "base_config": PPD_DECISION_ENGINE.base_config,
+        "ppd_config": PPD_DECISION_ENGINE.ppd_config,
+        "comparison": PPD_DECISION_ENGINE.get_performance_comparison(),
+    }
+
+
 def main():
-    global CONFIG_NAME
+    global CONFIG_NAME, ENABLE_PPD_MODE, PPD_DECISION_ENGINE
 
     parser = argparse.ArgumentParser(description="Comprehensive Proxy Server")
     parser.add_argument("--config", type=str, default="2P_2D",
@@ -634,6 +840,13 @@ def main():
                         help="ZMQ port for service discovery")
     parser.add_argument("--host", type=str, default="0.0.0.0",
                         help="Host to bind to")
+
+    # Dynamic PPD mode arguments
+    parser.add_argument("--enable-ppd-mode", action="store_true",
+                        help="Enable dynamic PPD routing with decision engine")
+    parser.add_argument("--ppd-benchmark-path", type=str,
+                        default=os.path.join(PROJECT_DIR, "results", "comprehensive"),
+                        help="Path to benchmark results for PPD decision engine")
 
     args = parser.parse_args()
     CONFIG_NAME = args.config
@@ -648,6 +861,31 @@ def main():
     print(f"[PROXY] Decode ports: D={d_ports}, pD={ppd_ports}")
     print(f"[PROXY] HTTP: {args.host}:{args.http_port}")
     print(f"[PROXY] ZMQ: {args.host}:{args.zmq_port}")
+
+    # Initialize dynamic PPD mode if enabled
+    if args.enable_ppd_mode:
+        print(f"[PROXY] Dynamic PPD mode: ENABLED")
+        print(f"[PROXY] Benchmark path: {args.ppd_benchmark_path}")
+
+        try:
+            from optimizer.ppd_decision_engine import PPDDecisionEngine
+            PPD_DECISION_ENGINE = PPDDecisionEngine(
+                benchmark_data_path=args.ppd_benchmark_path,
+                base_config=CONFIG_NAME,
+            )
+            ENABLE_PPD_MODE = True
+            print(f"[PROXY] PPD Decision Engine initialized successfully")
+            print(f"[PROXY] Comparing: {PPD_DECISION_ENGINE.base_config} vs {PPD_DECISION_ENGINE.ppd_config}")
+        except Exception as e:
+            print(f"[PROXY] ERROR: Failed to initialize PPD Decision Engine: {e}")
+            print(f"[PROXY] Continuing without dynamic PPD mode")
+            ENABLE_PPD_MODE = False
+    else:
+        print(f"[PROXY] Dynamic PPD mode: DISABLED")
+
+    # Initialize stats start time
+    with stats_lock:
+        stats["start_time"] = time.time()
 
     # Start service discovery
     start_service_discovery(args.host, args.zmq_port)
