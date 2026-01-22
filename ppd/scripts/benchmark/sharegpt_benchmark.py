@@ -656,21 +656,38 @@ def compute_statistics(
     }
 
 
-def start_config(config: str, enable_ppd: bool = False, ppd_benchmark_path: str = None) -> bool:
-    """Start a specific configuration."""
+def start_config(config: str, enable_ppd: bool = False, ppd_benchmark_path: str = None,
+                 w_ttft: float = 1.0, w_tpot: float = 1.0) -> bool:
+    """Start a specific configuration.
+
+    Args:
+        config: Configuration name (e.g., "2P_2D")
+        enable_ppd: Whether to enable dynamic PPD mode
+        ppd_benchmark_path: Path to benchmark data for PPD decision engine
+        w_ttft: Weight for TTFT improvement in PPD decision
+        w_tpot: Weight for TPOT degradation penalty in PPD decision
+    """
     script = Path(PROJECT_DIR) / "scripts" / "server" / f"start_{config}.sh"
     if not script.exists():
         print(f"  ERROR: Script not found: {script}")
         return False
 
-    # Modify startup script to include PPD mode if enabled
-    # For now, we'll handle this through environment variables or proxy args
+    # Set up environment variables for PPD mode
+    env = os.environ.copy()
+    if enable_ppd:
+        env["ENABLE_PPD_MODE"] = "true"
+        env["PPD_BENCHMARK_PATH"] = ppd_benchmark_path or str(Path(PROJECT_DIR) / "results" / "comprehensive")
+        env["W_TTFT"] = str(w_ttft)
+        env["W_TPOT"] = str(w_tpot)
+        print(f"  PPD Mode: ENABLED (w_ttft={w_ttft}, w_tpot={w_tpot})")
+
     try:
         proc = subprocess.Popen(
             ["bash", str(script)],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True
+            text=True,
+            env=env
         )
 
         start_time = time.time()
@@ -708,12 +725,15 @@ def stop_config() -> bool:
     return False
 
 
-async def restart_server(config: str, enable_ppd: bool = False) -> bool:
+async def restart_server(config: str, enable_ppd: bool = False,
+                         w_ttft: float = 1.0, w_tpot: float = 1.0) -> bool:
     """Restart server after failure.
 
     Args:
         config: GPU configuration name
         enable_ppd: Whether to enable PPD mode
+        w_ttft: Weight for TTFT improvement in PPD decision
+        w_tpot: Weight for TPOT degradation penalty in PPD decision
 
     Returns:
         True if restart successful
@@ -725,7 +745,7 @@ async def restart_server(config: str, enable_ppd: bool = False) -> bool:
     await asyncio.sleep(10)
 
     # Start server
-    if start_config(config, enable_ppd):
+    if start_config(config, enable_ppd, w_ttft=w_ttft, w_tpot=w_tpot):
         # Wait for server to be ready
         await asyncio.sleep(5)
 
@@ -754,11 +774,27 @@ async def run_full_benchmark(
     output_dir: Path,
     skip_startup: bool = False,
     sharegpt_path: Path = None,
+    w_ttft: float = 1.0,
+    w_tpot: float = 1.0,
 ):
-    """Run full benchmark for a configuration."""
+    """Run full benchmark for a configuration.
+
+    Args:
+        config: Configuration name (e.g., "2P_2D")
+        qps_points: List of QPS values to test
+        num_conversations: Number of conversations to run
+        enable_ppd: Whether to enable dynamic PPD mode
+        output_dir: Output directory for results
+        skip_startup: Skip server startup (assume already running)
+        sharegpt_path: Path to ShareGPT/WildChat dataset
+        w_ttft: Weight for TTFT improvement in PPD decision
+        w_tpot: Weight for TPOT degradation penalty in PPD decision
+    """
     print(f"\n{'='*60}")
     print(f"ShareGPT Benchmark: {config}")
     print(f"PPD Mode: {'ENABLED' if enable_ppd else 'DISABLED'}")
+    if enable_ppd:
+        print(f"PPD Weights: w_ttft={w_ttft}, w_tpot={w_tpot}")
     print(f"{'='*60}")
 
     # Load ShareGPT data
@@ -776,7 +812,7 @@ async def run_full_benchmark(
     # Start servers if needed
     if not skip_startup:
         print("\nStarting servers...")
-        if not start_config(config, enable_ppd):
+        if not start_config(config, enable_ppd, w_ttft=w_ttft, w_tpot=w_tpot):
             print(f"ERROR: Failed to start {config}")
             return
 
@@ -864,7 +900,7 @@ async def run_full_benchmark(
             print(f"\n  Too many consecutive failures ({consecutive_failures}), attempting restart...")
             server_restarts += 1
 
-            if not skip_startup and await restart_server(config, enable_ppd):
+            if not skip_startup and await restart_server(config, enable_ppd, w_ttft=w_ttft, w_tpot=w_tpot):
                 print("  Server restart successful, continuing...")
                 consecutive_failures = 0
             else:
@@ -881,7 +917,7 @@ async def run_full_benchmark(
                     break
 
                 server_restarts += 1
-                if not skip_startup and await restart_server(config, enable_ppd):
+                if not skip_startup and await restart_server(config, enable_ppd, w_ttft=w_ttft, w_tpot=w_tpot):
                     print("  [Health] Server restart successful")
                     consecutive_failures = 0
                 else:
@@ -908,6 +944,10 @@ async def main():
                         help="QPS points to test")
     parser.add_argument("--enable-ppd", action="store_true",
                         help="Enable dynamic PPD mode")
+    parser.add_argument("--w-ttft", type=float, default=1.0,
+                        help="Weight for TTFT improvement in PPD decision (default: 1.0)")
+    parser.add_argument("--w-tpot", type=float, default=1.0,
+                        help="Weight for TPOT degradation penalty in PPD decision (default: 1.0)")
     parser.add_argument("--output-dir", type=str, default="results/sharegpt",
                         help="Output directory")
     parser.add_argument("--skip-startup", action="store_true",
@@ -932,6 +972,8 @@ async def main():
     print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Configuration: {args.config}")
     print(f"PPD Mode: {'ENABLED' if args.enable_ppd else 'DISABLED'}")
+    if args.enable_ppd:
+        print(f"PPD Weights: w_ttft={args.w_ttft}, w_tpot={args.w_tpot}")
     print(f"Conversations: {args.num_conversations}")
     print(f"QPS points: {args.qps}")
     print(f"Output: {output_dir}")
@@ -944,6 +986,8 @@ async def main():
         output_dir=output_dir,
         skip_startup=args.skip_startup,
         sharegpt_path=sharegpt_path,
+        w_ttft=args.w_ttft,
+        w_tpot=args.w_tpot,
     )
 
     print("\n" + "="*60)

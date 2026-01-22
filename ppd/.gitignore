@@ -3,6 +3,8 @@ logs/
 docs/
 archive/
 data/
+basic_exp_data.xlsx
+icml2026/
 
 # Python cache
 __pycache__/
