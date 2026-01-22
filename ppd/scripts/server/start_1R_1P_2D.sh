@@ -77,10 +77,22 @@ fi
 echo "[1/5] Starting Proxy..."
 PROXY_PORT=10001
 PROXY_CONTROL_PORT=30001
+
+# Build PPD arguments from environment variables
+PPD_ARGS=""
+if [ "$ENABLE_PPD_MODE" = "true" ]; then
+    PPD_ARGS="--enable-ppd-mode"
+    PPD_ARGS="$PPD_ARGS --ppd-benchmark-path ${PPD_BENCHMARK_PATH:-$PROJECT_DIR/results/comprehensive}"
+    [ -n "$W_TTFT" ] && PPD_ARGS="$PPD_ARGS --w-ttft $W_TTFT"
+    [ -n "$W_TPOT" ] && PPD_ARGS="$PPD_ARGS --w-tpot $W_TPOT"
+    echo "  PPD Mode: ENABLED (w_ttft=${W_TTFT:-1.0}, w_tpot=${W_TPOT:-1.0})"
+fi
+
 python "$SRC_DIR/comprehensive_proxy.py" \
     --config 1R_1P_2D \
     --http-port $PROXY_PORT \
     --zmq-port $PROXY_CONTROL_PORT \
+    $PPD_ARGS \
     > "$LOG_DIR/proxy.log" 2>&1 &
 sleep 2
 

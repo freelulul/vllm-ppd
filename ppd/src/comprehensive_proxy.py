@@ -847,6 +847,10 @@ def main():
     parser.add_argument("--ppd-benchmark-path", type=str,
                         default=os.path.join(PROJECT_DIR, "results", "comprehensive"),
                         help="Path to benchmark results for PPD decision engine")
+    parser.add_argument("--w-ttft", type=float, default=1.0,
+                        help="Weight for TTFT improvement in PPD decision (default: 1.0)")
+    parser.add_argument("--w-tpot", type=float, default=1.0,
+                        help="Weight for TPOT degradation penalty in PPD decision (default: 1.0)")
 
     args = parser.parse_args()
     CONFIG_NAME = args.config
@@ -866,12 +870,15 @@ def main():
     if args.enable_ppd_mode:
         print(f"[PROXY] Dynamic PPD mode: ENABLED")
         print(f"[PROXY] Benchmark path: {args.ppd_benchmark_path}")
+        print(f"[PROXY] Weights: w_ttft={args.w_ttft}, w_tpot={args.w_tpot}")
 
         try:
             from optimizer.ppd_decision_engine import PPDDecisionEngine
             PPD_DECISION_ENGINE = PPDDecisionEngine(
                 benchmark_data_path=args.ppd_benchmark_path,
                 base_config=CONFIG_NAME,
+                w_ttft=args.w_ttft,
+                w_tpot=args.w_tpot,
             )
             ENABLE_PPD_MODE = True
             print(f"[PROXY] PPD Decision Engine initialized successfully")

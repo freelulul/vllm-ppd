@@ -1,0 +1,77 @@
+{
+  "config": "2P_2D",
+  "ppd_enabled": false,
+  "qps": 12.0,
+  "num_conversations": 500,
+  "duration_sec": 223.7777619101107,
+  "timestamp": "2026-01-21T17:54:13.156135",
+  "turn1": {
+    "count": 2,
+    "avg_ttft_ms": 0.0,
+    "avg_tpot_ms": 0,
+    "avg_e2e_ms": 55532.73627907038,
+    "p50_ttft_ms": 0.0,
+    "p50_tpot_ms": 0,
+    "p50_e2e_ms": 55532.73627907038,
+    "p90_ttft_ms": 0.0,
+    "p90_tpot_ms": 0,
+    "p90_e2e_ms": 99894.09728497267,
+    "p99_ttft_ms": 0.0,
+    "p99_tpot_ms": 0,
+    "p99_e2e_ms": 109875.40351130068
+  },
+  "turn2plus": {
+    "count": 1,
+    "avg_ttft_ms": 0.0,
+    "avg_tpot_ms": 0,
+    "avg_e2e_ms": 84.96585115790367,
+    "p50_ttft_ms": 0.0,
+    "p50_tpot_ms": 0,
+    "p50_e2e_ms": 84.96585115790367,
+    "p90_ttft_ms": 0.0,
+    "p90_tpot_ms": 0,
+    "p90_e2e_ms": 84.96585115790367,
+    "p99_ttft_ms": 0.0,
+    "p99_tpot_ms": 0,
+    "p99_e2e_ms": 84.96585115790367
+  },
+  "all_turns": {
+    "count": 3,
+    "avg_ttft_ms": 0.0,
+    "avg_tpot_ms": 0,
+    "avg_e2e_ms": 37050.146136432886,
+    "p50_ttft_ms": 0.0,
+    "p50_tpot_ms": 0,
+    "p50_e2e_ms": 84.96585115790367,
+    "p90_ttft_ms": 0.0,
+    "p90_tpot_ms": 0,
+    "p90_e2e_ms": 88804.54319939017,
+    "p99_ttft_ms": 0.0,
+    "p99_tpot_ms": 0,
+    "p99_e2e_ms": 108766.44810274243
+  },
+  "throughput": {
+    "conversations_per_sec": 2.234359642048994,
+    "requests_per_sec": 2.247765799901288,
+    "tokens_per_sec": 0.0
+  },
+  "success_rate": {
+    "turns": 0.5964214711729622,
+    "conversations": 0.0
+  },
+  "counts": {
+    "total_conversations": 500,
+    "successful_conversations": 0,
+    "total_turns": 503,
+    "turn1_count": 500,
+    "turn2plus_count": 3,
+    "successful_turns": 3
+  },
+  "slo_attainment": {
+    "ttft_100ms": 1.0,
+    "ttft_200ms": 1.0,
+    "ttft_500ms": 1.0,
+    "e2e_5000ms": 1.0,
+    "e2e_10000ms": 1.0
+  }
+}
