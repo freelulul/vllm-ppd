@@ -796,22 +796,45 @@ async def get_conversations():
 async def get_ppd_decisions():
     """Get PPD decision log for analysis."""
     with PPD_LOG_LOCK:
-        recent_decisions = PPD_DECISION_LOG[-100:]  # Last 100 decisions
+        all_decisions = PPD_DECISION_LOG.copy()
 
-    # Compute summary statistics
-    total = len(recent_decisions)
-    ppd_count = sum(1 for d in recent_decisions if d.get("ppd_decision"))
+    # Compute summary statistics using ALL decisions (not just last 100)
+    total = len(all_decisions)
+    ppd_count = sum(1 for d in all_decisions if d.get("ppd_decision"))
     pd_count = total - ppd_count
+
+    # Only return recent decisions for display (last 100)
+    recent_decisions = all_decisions[-100:] if len(all_decisions) > 100 else all_decisions
 
     return {
         "ppd_mode_enabled": ENABLE_PPD_MODE,
-        "total_logged": len(PPD_DECISION_LOG),
-        "recent_count": total,
+        "total_logged": total,
         "ppd_decisions": ppd_count,
         "pd_decisions": pd_count,
         "ppd_ratio": ppd_count / max(1, total),
         "recent_decisions": recent_decisions,
         "engine_stats": PPD_DECISION_ENGINE.get_decision_stats() if PPD_DECISION_ENGINE else None,
+    }
+
+
+@app.route("/ppd-decisions/reset", methods=["POST"])
+async def reset_ppd_decisions():
+    """Reset PPD decision log. Used to clear stats between test runs."""
+    global PPD_DECISION_LOG
+
+    with PPD_LOG_LOCK:
+        old_count = len(PPD_DECISION_LOG)
+        PPD_DECISION_LOG = []
+
+    # Also reset engine stats if available
+    if PPD_DECISION_ENGINE is not None:
+        PPD_DECISION_ENGINE.stats = type(PPD_DECISION_ENGINE.stats)()
+
+    print(f"[PROXY] PPD decision log reset (cleared {old_count} entries)")
+
+    return {
+        "status": "reset",
+        "cleared_entries": old_count,
     }
 
 

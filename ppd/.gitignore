@@ -1,10 +1,46 @@
+# SLURM batch scripts
 sbatch*
+
+# Runtime logs
 logs/
+
+# Internal documentation
 docs/
+
+# Archived code
 archive/
+
+# Datasets (large files - download separately)
 data/
-basic_exp_data.xlsx
+
+# Benchmark results (download separately)
+results/
+
+# Paper source
 icml2026/
+
+# Development files
+CLAUDE.md
+basic_exp_data.xlsx
+
+# Paper-specific analysis scripts
+scripts/analysis/
+scripts/experiments/
+scripts/data/
+
+# Archived benchmark scripts
+scripts/benchmark/merge_*.py
+scripts/benchmark/submit_*.sh
+scripts/benchmark/synthetic_benchmark.py
+scripts/benchmark/run_*.sh
+
+# Archived test scripts
+scripts/tests/extreme_context_test.py
+scripts/tests/high_qps_boundary_test.py
+scripts/tests/test_oom_boundary.py
+
+# Loose image files
+*.png
 
 # Python cache
 __pycache__/

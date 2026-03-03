@@ -50,20 +50,20 @@ PROXY_URL = "http://localhost:10001"
 MODEL_CONFIGS = {
     "8B": {
         "name": "Llama-3.1-8B",
-        "path": "/net/projects2/ds3lab/zongzel/models--meta-llama--Llama-3.1-8B",
+        "path": os.environ.get("MODEL_PATH_8B", "meta-llama/Llama-3.1-8B"),
         "max_model_len": 8192,
         "gpu_memory_utilization": 0.90,
     },
     "14B": {
         "name": "Qwen2.5-14B",
-        "path": "/net/projects2/ds3lab/zongzel/qwen-2.5-14B",  # Update this path
+        "path": os.environ.get("MODEL_PATH_14B", "Qwen/Qwen2.5-14B"),
         "max_model_len": 8192,
         "gpu_memory_utilization": 0.92,
     },
     "27B": {
         "name": "Gemma-2-27B",
-        "path": "/net/projects2/ds3lab/zongzel/gemma-2-27B",  # Update this path
-        "max_model_len": 4096,  # May need to reduce for larger models
+        "path": os.environ.get("MODEL_PATH_27B", "google/gemma-2-27b"),
+        "max_model_len": 4096,
         "gpu_memory_utilization": 0.95,
     },
 }

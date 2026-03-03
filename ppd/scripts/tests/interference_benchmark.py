@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-Interference Benchmark - Prefill-Decode干扰测试
+Interference Benchmark - Prefill-Decode Interference Test
 
-用于论文引入部分的micro-benchmark，证明：
-1. Full-prefill与decode混合时干扰严重
-2. Append-prefill与decode混合时干扰很小
-3. 因此PPD模式中pD上的append-prefill+decode共存是可行的
+Micro-benchmark demonstrating:
+1. Full-prefill causes significant interference with concurrent decode
+2. Append-prefill causes minimal interference with concurrent decode
+3. Therefore co-locating append-prefill + decode on pD nodes is viable
 
-实验设计（参考DistServe Figure 2）：
+Experiment design (inspired by DistServe Figure 2):
 - Line 1: decode-only baseline
 - Line 2: decode + one full-prefill (input=1024, context=0)
 - Line 3: decode + one append-prefill (input=128, context=2048)
 
-X轴: Batch size (通过并发decode请求数控制)
-Y轴: Average TPOT (ms) 和 Batch Execution Time (ms)
+X-axis: Batch size (controlled by concurrent decode request count)
+Y-axis: Average TPOT (ms) and Batch Execution Time (ms)
 """
 
 import os
@@ -29,12 +29,24 @@ from dataclasses import dataclass, asdict
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 import numpy as np
+from transformers import AutoTokenizer
 
 # Add project root to path
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_DIR)
 
 from src.config import MODEL_PATH, REQUEST_TIMEOUT_SEC
+
+# Initialize tokenizer for accurate token counting
+_tokenizer = None
+
+def get_tokenizer():
+    global _tokenizer
+    if _tokenizer is None:
+        print("Loading tokenizer...")
+        _tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+        print(f"  Tokenizer loaded: {MODEL_PATH}")
+    return _tokenizer
 
 # =============================================================================
 # Configuration
@@ -43,10 +55,14 @@ from src.config import MODEL_PATH, REQUEST_TIMEOUT_SEC
 # Server URL (single replica server)
 SERVER_URL = "http://localhost:8300"
 
-# Decode request configuration (simulates ongoing decode work)
+# Context lengths to test (for scaling experiments)
+CONTEXT_LENGTHS = [2048, 8192, 16384, 32768, 65536, 102400]  # 2K to 100K
+
+# Default decode request configuration (simulates ongoing decode work)
+# NOTE: new_input=4 to minimize prefill overhead, making baseline closer to "pure decode"
 DECODE_CONFIG = {
     "context": 2048,      # Existing prefix cache size
-    "new_input": 32,      # Small new input (continuation)
+    "new_input": 4,       # Minimal new input for near-pure decode
     "output": 64,         # Number of tokens to generate
 }
 
@@ -58,9 +74,10 @@ FULL_PREFILL_CONFIG = {
 }
 
 # Append-prefill configuration (simulates PPD Turn 2+ - with cache)
+# NOTE: input=1024 to match FULL_PREFILL_CONFIG for fair comparison
 APPEND_PREFILL_CONFIG = {
     "context": 2048,      # Full cache from previous turn
-    "input": 128,         # Short new input
+    "input": 1024,        # Same input length as full-prefill for fair comparison
     "output": 64,         # Generate some tokens to measure TPOT
 }
 
@@ -145,22 +162,35 @@ class ExperimentResult:
 # =============================================================================
 
 def generate_random_text(num_tokens: int, seed: str = None) -> str:
-    """Generate random text with approximately num_tokens tokens."""
+    """Generate random text with exactly num_tokens tokens using tokenizer."""
     if seed:
         random.seed(hash(seed) % (2**32))
 
-    # Approximate 1 token = 4 characters
-    chars_needed = num_tokens * 4
+    tokenizer = get_tokenizer()
+
+    # Generate more text than needed, then truncate to exact token count
+    # Use a larger multiplier for safety (random text tokenizes unpredictably)
     words = []
+    # Generate roughly 2x the characters we might need
+    target_chars = num_tokens * 6
     chars_generated = 0
 
-    while chars_generated < chars_needed:
-        word_len = random.randint(3, 10)
+    while chars_generated < target_chars:
+        word_len = random.randint(3, 8)
         word = ''.join(random.choices(string.ascii_lowercase, k=word_len))
         words.append(word)
         chars_generated += word_len + 1
 
-    return ' '.join(words)
+    text = ' '.join(words)
+
+    # Tokenize and truncate to exact token count
+    tokens = tokenizer.encode(text, add_special_tokens=False)
+    if len(tokens) > num_tokens:
+        tokens = tokens[:num_tokens]
+
+    # Decode back to text
+    result = tokenizer.decode(tokens, skip_special_tokens=True)
+    return result
 
 
 def generate_prompt_with_context(context_tokens: int, new_input_tokens: int,
@@ -529,16 +559,16 @@ async def run_core_experiment() -> ExperimentResult:
 
 async def run_sensitivity_experiment() -> ExperimentResult:
     """
-    Run the append-prefill input length sensitivity experiment.
+    Run the context length sensitivity experiment.
 
-    Fixed decode batch size, varying append-prefill input length.
-    Shows how interference scales with input length.
+    Tests how interference scales with different context lengths (2K to 128K).
+    For each context length, measures decode TPOT with and without append-prefill.
     """
     print("\n" + "=" * 70)
-    print("Sensitivity Experiment: Append-prefill Input Length Impact")
+    print("Sensitivity Experiment: Context Length Impact on Interference")
     print("=" * 70)
+    print(f"Context lengths: {CONTEXT_LENGTHS}")
     print(f"Decode batch size: {SENSITIVITY_BATCH_SIZE}")
-    print(f"Input lengths: {APPEND_INPUT_SIZES[0]} to {APPEND_INPUT_SIZES[-1]} ({len(APPEND_INPUT_SIZES)} points)")
     print(f"Repeat times: {REPEAT_TIMES}")
 
     all_results = []
@@ -546,51 +576,54 @@ async def run_sensitivity_experiment() -> ExperimentResult:
     connector = aiohttp.TCPConnector(limit=200, limit_per_host=200)
     async with aiohttp.ClientSession(connector=connector) as session:
 
-        # Establish prefix cache
-        print("\nEstablishing prefix cache...")
-        context_prefix = generate_random_text(
-            DECODE_CONFIG["context"],
-            seed="sensitivity_context_prefix"
-        )
-        context_prefix = "SENSITIVITY_CONTEXT_START " + context_prefix + " CONTEXT_END "
-
-        for _ in range(WARMUP_REQUESTS):
-            await warmup_cache(session, context_prefix)
-        print("  Cache established.")
-
-        # Get decode-only baseline first
-        print(f"\nGetting decoding_only baseline (batch={SENSITIVITY_BATCH_SIZE})...")
-        baseline_tpots = []
-        for repeat in range(REPEAT_TIMES):
-            result = await run_batch(
-                session, "decoding_only_baseline",
-                SENSITIVITY_BATCH_SIZE, context_prefix, None
-            )
-            baseline_tpots.append(result.decode_avg_tpot_ms)
-            all_results.append(asdict(result))
-            await asyncio.sleep(0.3)
-
-        baseline_avg_tpot = np.mean(baseline_tpots)
-        print(f"  Baseline TPOT: {baseline_avg_tpot:.2f} ms")
-
-        # Test different input sizes
-        total_tests = len(APPEND_INPUT_SIZES) * REPEAT_TIMES
+        total_tests = len(CONTEXT_LENGTHS) * REPEAT_TIMES * 3  # baseline + full + append per context
         test_count = 0
 
-        for input_size in APPEND_INPUT_SIZES:
-            print(f"\n--- Append Input Length: {input_size} tokens ---")
+        # Iterate over different context lengths
+        for context_len in CONTEXT_LENGTHS:
+            print(f"\n{'='*70}")
+            print(f"Context Length: {context_len} tokens ({context_len//1024}K)")
+            print(f"{'='*70}")
 
-            append_config = {
-                "context": DECODE_CONFIG["context"],  # Has cache
-                "input": input_size,
-                "output": 64,
-            }
+            # Establish prefix cache for this context length
+            print(f"\nEstablishing prefix cache ({context_len} tokens)...")
+            context_prefix = generate_random_text(
+                context_len,
+                seed=f"sensitivity_context_prefix_{context_len}"
+            )
+            context_prefix = f"SENSITIVITY_CONTEXT_{context_len}_START " + context_prefix + " CONTEXT_END "
 
+            for _ in range(WARMUP_REQUESTS):
+                await warmup_cache(session, context_prefix)
+            print("  Cache established.")
+
+            # Get decode-only baseline for this context length
+            print(f"\nGetting decoding_only baseline (context={context_len//1024}K, batch={SENSITIVITY_BATCH_SIZE})...")
+            baseline_tpots = []
+            for repeat in range(REPEAT_TIMES):
+                result = await run_batch(
+                    session, f"decoding_only_baseline_ctx{context_len}",
+                    SENSITIVITY_BATCH_SIZE, context_prefix, None
+                )
+                baseline_tpots.append(result.decode_avg_tpot_ms)
+                result_dict = asdict(result)
+                result_dict["context_length"] = context_len
+                result_dict["experiment_type"] = "baseline"
+                all_results.append(result_dict)
+                test_count += 1
+                await asyncio.sleep(0.3)
+
+            baseline_avg_tpot = np.mean(baseline_tpots)
+            print(f"  Baseline TPOT: {baseline_avg_tpot:.2f} ms")
+
+            # Test full-prefill interference at this context length
+            print(f"\n--- Full-prefill interference (context={context_len//1024}K) ---")
             for repeat in range(REPEAT_TIMES):
                 result = await run_batch(
                     session,
-                    f"decoding_with_1_append_prefill_len{input_size}",
-                    SENSITIVITY_BATCH_SIZE, context_prefix, append_config,
+                    f"decoding_with_1_full_prefill_ctx{context_len}",
+                    SENSITIVITY_BATCH_SIZE, context_prefix,
+                    FULL_PREFILL_CONFIG,
                     prefill_count=1
                 )
 
@@ -598,7 +631,44 @@ async def run_sensitivity_experiment() -> ExperimentResult:
                            / baseline_avg_tpot * 100) if baseline_avg_tpot > 0 else 0
 
                 result_dict = asdict(result)
-                result_dict["append_input_length"] = input_size
+                result_dict["context_length"] = context_len
+                result_dict["experiment_type"] = "full_prefill"
+                result_dict["decode_slowdown_percent"] = slowdown
+                result_dict["baseline_tpot_ms"] = baseline_avg_tpot
+                all_results.append(result_dict)
+
+                test_count += 1
+                progress = test_count / total_tests * 100
+
+                print(f"  Rep {repeat+1}/{REPEAT_TIMES}: "
+                      f"TPOT={result.decode_avg_tpot_ms:.1f}ms, "
+                      f"slowdown={slowdown:+.1f}% [{progress:.0f}%]")
+
+                await asyncio.sleep(0.3)
+
+            # Test append-prefill interference at this context length
+            print(f"\n--- Append-prefill interference (context={context_len//1024}K) ---")
+            append_config = {
+                "context": context_len,
+                "input": APPEND_PREFILL_CONFIG["input"],
+                "output": APPEND_PREFILL_CONFIG["output"],
+            }
+
+            for repeat in range(REPEAT_TIMES):
+                result = await run_batch(
+                    session,
+                    f"decoding_with_1_append_prefill_ctx{context_len}",
+                    SENSITIVITY_BATCH_SIZE, context_prefix,
+                    append_config,
+                    prefill_count=1
+                )
+
+                slowdown = ((result.decode_avg_tpot_ms - baseline_avg_tpot)
+                           / baseline_avg_tpot * 100) if baseline_avg_tpot > 0 else 0
+
+                result_dict = asdict(result)
+                result_dict["context_length"] = context_len
+                result_dict["experiment_type"] = "append_prefill"
                 result_dict["decode_slowdown_percent"] = slowdown
                 result_dict["baseline_tpot_ms"] = baseline_avg_tpot
                 all_results.append(result_dict)
@@ -613,7 +683,7 @@ async def run_sensitivity_experiment() -> ExperimentResult:
                 await asyncio.sleep(0.3)
 
     return ExperimentResult(
-        experiment_type="sensitivity",
+        experiment_type="sensitivity_context_length",
         timestamp=datetime.now().isoformat(),
         results=all_results,
         decode_config=DECODE_CONFIG,
@@ -653,7 +723,7 @@ async def check_server_health() -> bool:
 
 
 async def main():
-    global SERVER_URL
+    global SERVER_URL, OUTPUT_DIR
 
     parser = argparse.ArgumentParser(description="Interference Benchmark")
     parser.add_argument("--core", action="store_true", help="Run core experiment")
@@ -661,9 +731,14 @@ async def main():
     parser.add_argument("--all", action="store_true", help="Run all experiments")
     parser.add_argument("--server-url", type=str, default="http://localhost:8300",
                        help="Server URL (default: http://localhost:8300)")
+    parser.add_argument("--output-dir", type=str, default=None,
+                       help="Output directory for results (default: results/interference)")
     args = parser.parse_args()
 
     SERVER_URL = args.server_url
+    if args.output_dir:
+        OUTPUT_DIR = args.output_dir
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     if not any([args.core, args.sensitivity, args.all]):
         args.all = True
