@@ -1,0 +1,7 @@
+vllm>=0.7.0
+quart
+aiohttp
+pyzmq
+msgpack
+numpy
+transformers

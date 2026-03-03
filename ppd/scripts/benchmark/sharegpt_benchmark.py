@@ -61,8 +61,8 @@ SERVER_RESTART_WAIT_SEC = 120
 MAX_SERVER_RESTARTS = 2
 MAX_CONSECUTIVE_FAILURES = 3
 
-# QPS test points (same as comprehensive_benchmark)
-QPS_POINTS = [0.5, 1, 2, 4, 6, 8, 10, 12, 16, 20]
+# QPS test points (extended to 15 points for paper figure)
+QPS_POINTS = [0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20]
 
 # Token limits
 MAX_INPUT_TOKENS = 2048
@@ -290,6 +290,46 @@ class ShareGPTDataLoader:
         if n >= len(self.conversations):
             return self.conversations.copy()
         return random.sample(self.conversations, n)
+
+
+async def get_ppd_routing_stats() -> Optional[Dict]:
+    """Get PPD routing decision statistics from proxy.
+
+    Returns:
+        Dictionary with routing stats if available, None otherwise.
+    """
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f"{PROXY_URL}/ppd-decisions") as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return {
+                        "pd_count": data.get("pd_decisions", 0),
+                        "ppd_count": data.get("ppd_decisions", 0),
+                        "ppd_ratio": data.get("ppd_ratio", 0),
+                        "total_logged": data.get("total_logged", 0),
+                    }
+    except Exception:
+        pass
+    return None
+
+
+async def reset_ppd_routing_stats() -> bool:
+    """Reset PPD routing stats on proxy before a test run.
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            # POST to reset stats
+            async with session.post(f"{PROXY_URL}/ppd-decisions/reset") as resp:
+                return resp.status == 200
+    except Exception:
+        pass
+    return False
 
 
 async def check_server_health() -> Tuple[bool, Optional[str]]:
@@ -836,6 +876,14 @@ async def run_full_benchmark(
     for qps in qps_points:
         print(f"\n  Testing QPS={qps}...")
 
+        # Reset PPD stats before each QPS test for accurate per-test statistics
+        if enable_ppd:
+            reset_ok = await reset_ppd_routing_stats()
+            if reset_ok:
+                print(f"    PPD stats reset")
+            else:
+                print(f"    WARNING: Could not reset PPD stats")
+
         test_success = False
         try:
             results, duration = await asyncio.wait_for(
@@ -844,6 +892,15 @@ async def run_full_benchmark(
             )
 
             stats = compute_statistics(results, duration)
+
+            # Get PPD routing statistics if PPD mode is enabled
+            ppd_routing = None
+            if enable_ppd:
+                ppd_routing = await get_ppd_routing_stats()
+                if ppd_routing:
+                    print(f"    PPD Routing: PD={ppd_routing['pd_count']}, "
+                          f"PPD={ppd_routing['ppd_count']}, "
+                          f"Ratio={ppd_routing['ppd_ratio']:.2%}")
 
             # Save results
             result_data = {
@@ -855,6 +912,10 @@ async def run_full_benchmark(
                 "timestamp": datetime.now().isoformat(),
                 **stats,
             }
+
+            # Add PPD routing stats if available
+            if ppd_routing:
+                result_data["ppd_routing"] = ppd_routing
 
             filename = f"{config}_{'ppd' if enable_ppd else 'baseline'}_qps{qps}.json"
             filepath = output_dir / filename

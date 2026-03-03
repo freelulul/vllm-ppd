@@ -17,9 +17,8 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 # Model configuration
-# Change this when switching models, or use environment variables for dynamic override
-_DEFAULT_MODEL_PATH = "/net/projects2/ds3lab/zongzel/models--meta-llama--Llama-3.1-8B"
-MODEL_PATH = os.environ.get("MODEL_PATH", _DEFAULT_MODEL_PATH)
+# Set MODEL_PATH environment variable to your local model path
+MODEL_PATH = os.environ.get("MODEL_PATH", "meta-llama/Llama-3.1-8B")
 MODEL_NAME = os.environ.get("MODEL_NAME", "Llama-3.1-8B")
 
 # Server ports

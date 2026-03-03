@@ -11,8 +11,8 @@
 # - GPU_MEMORY_UTILIZATION: Override GPU memory utilization
 # ============================================================================
 
-# Model path - change this when switching models, or set MODEL_PATH env var first
-export MODEL_PATH="${MODEL_PATH:-/net/projects2/ds3lab/zongzel/models--meta-llama--Llama-3.1-8B}"
+# Model path - set MODEL_PATH env var before sourcing this file
+export MODEL_PATH="${MODEL_PATH:-meta-llama/Llama-3.1-8B}"
 
 # Model name for pkill (derived from MODEL_PATH if not set)
 export MODEL_NAME="${MODEL_NAME:-Llama-3.1-8B}"
