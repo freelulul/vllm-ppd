@@ -50,9 +50,8 @@ echo "=============================================="
 # Cleanup existing processes
 echo ""
 echo "Cleaning up existing processes..."
-pkill -9 -f "vllm serve" 2>/dev/null || true
-pkill -9 -f "EngineCore" 2>/dev/null || true
-pkill -9 -f "$MODEL_NAME" 2>/dev/null || true
+pkill -9 -f "[v]llm serve" 2>/dev/null || true
+pkill -9 -f "[E]ngineCore" 2>/dev/null || true
 sleep 5
 
 # Check if port is free

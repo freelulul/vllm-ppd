@@ -17,22 +17,21 @@ echo "=== Starting comprehensive cleanup ==="
 
 # Step 1: Kill all proxy processes
 echo "[1/5] Killing proxy processes..."
-pkill -9 -f "comprehensive_proxy" 2>/dev/null
-pkill -9 -f "disagg_proxy" 2>/dev/null
-pkill -9 -f "simple_replica_proxy" 2>/dev/null
-pkill -9 -f "optimizer_proxy" 2>/dev/null
+pkill -9 -f "[c]omprehensive_proxy" 2>/dev/null
+pkill -9 -f "[d]isagg_proxy" 2>/dev/null
+pkill -9 -f "[s]imple_replica_proxy" 2>/dev/null
+pkill -9 -f "[o]ptimizer_proxy" 2>/dev/null
 
 # Step 2: Kill all vLLM serve processes
 echo "[2/5] Killing vLLM serve processes..."
-pkill -9 -f "vllm serve" 2>/dev/null
+pkill -9 -f "[v]llm serve" 2>/dev/null
 
 # Step 3: Kill EngineCore processes (these hold GPU memory)
 echo "[3/5] Killing EngineCore processes..."
-pkill -9 -f "EngineCore" 2>/dev/null
+pkill -9 -f "[E]ngineCore" 2>/dev/null
 
 # Step 4: Kill any remaining Python processes using our model
 echo "[4/5] Killing model-related processes..."
-pkill -9 -f "$MODEL_NAME" 2>/dev/null
 
 # Step 5: Wait for processes to die and GPU memory to release
 echo "[5/5] Waiting for GPU memory to release..."

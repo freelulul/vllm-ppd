@@ -92,17 +92,17 @@ force_cleanup() {
     echo "Force cleanup of vLLM and proxy processes..."
 
     # Kill vLLM processes
-    pkill -9 -f "vllm serve" 2>/dev/null || true
-    pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
+    pkill -9 -f "[v]llm serve" 2>/dev/null || true
+    pkill -9 -f "[v]llm.entrypoints" 2>/dev/null || true
 
     # Kill proxy processes
-    pkill -f "disagg_proxy" 2>/dev/null || true
-    pkill -f "optimizer_proxy" 2>/dev/null || true
-    pkill -f "simple_replica_proxy" 2>/dev/null || true
-    pkill -f "replication_proxy" 2>/dev/null || true
+    pkill -f "[d]isagg_proxy" 2>/dev/null || true
+    pkill -f "[o]ptimizer_proxy" 2>/dev/null || true
+    pkill -f "[s]imple_replica_proxy" 2>/dev/null || true
+    pkill -f "[r]eplication_proxy" 2>/dev/null || true
 
     # Kill EngineCore processes (zombie vLLM workers)
-    pkill -9 -f "EngineCore" 2>/dev/null || true
+    pkill -9 -f "[E]ngineCore" 2>/dev/null || true
 
     sleep 3
     echo "Cleanup complete."
@@ -129,10 +129,9 @@ wait_for_port() {
 
 # Check environment
 check_environment() {
-    local PYTHON_PATH=$(which python)
-    if [[ "$PYTHON_PATH" != *"vllm-ppd"* ]]; then
-        echo "ERROR: Please activate vllm-ppd first:"
-        echo "  conda activate vllm-ppd"
+    if ! python -c "import vllm" 2>/dev/null; then
+        echo "ERROR: vllm not found. Please install vllm or activate your Python environment."
+        echo "  pip install -r requirements.txt"
         return 1
     fi
 

@@ -243,12 +243,11 @@ if [ -f "$SCRIPT_DIR/cleanup_all.sh" ]; then
     bash "$SCRIPT_DIR/cleanup_all.sh"
 else
     echo "Cleaning up existing processes..."
-    pkill -9 -f "vllm serve" 2>/dev/null || true
-    pkill -9 -f "comprehensive_proxy" 2>/dev/null || true
-    pkill -9 -f "disagg_proxy" 2>/dev/null || true
-    pkill -9 -f "simple_replica_proxy" 2>/dev/null || true
-    pkill -9 -f "EngineCore" 2>/dev/null || true
-    pkill -9 -f "$MODEL_NAME" 2>/dev/null || true
+    pkill -9 -f "[v]llm serve" 2>/dev/null || true
+    pkill -9 -f "[c]omprehensive_proxy" 2>/dev/null || true
+    pkill -9 -f "[d]isagg_proxy" 2>/dev/null || true
+    pkill -9 -f "[s]imple_replica_proxy" 2>/dev/null || true
+    pkill -9 -f "[E]ngineCore" 2>/dev/null || true
     sleep 10
 fi
 '''
