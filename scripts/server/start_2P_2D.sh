@@ -41,7 +41,7 @@ MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
 GPU_MEMORY_UTIL="${GPU_MEMORY_UTILIZATION:-0.85}"
 
 LOG_DIR="$PROJECT_DIR/logs/2P_2D"
-SRC_DIR="$PROJECT_DIR/src"
+SRC_DIR="$PROJECT_DIR/ppd"
 mkdir -p "$LOG_DIR"
 rm -f "$LOG_DIR"/*.log 2>/dev/null || true
 
@@ -98,7 +98,7 @@ sleep 2
 # Start Prefill (GPU 0)
 echo "[2/5] Starting Prefill (GPU 0, port 8100)..."
 KV_CONFIG='{"kv_connector":"P2pNcclConnector","kv_role":"kv_producer","kv_buffer_size":1000000000,"kv_port":14579,"kv_connector_extra_config":{"proxy_ip":"0.0.0.0","proxy_port":"30001","http_port":"8100","send_type":"PUT_ASYNC"}}'
-CUDA_VISIBLE_DEVICES=0 vllm serve "$MODEL_PATH" \
+CUDA_VISIBLE_DEVICES=0 python -m vllm.entrypoints.cli.main serve "$MODEL_PATH" \
     --host 0.0.0.0 --port 8100 \
     --max-model-len $MAX_MODEL_LEN \
     --gpu-memory-utilization $GPU_MEMORY_UTIL \
@@ -110,7 +110,7 @@ CUDA_VISIBLE_DEVICES=0 vllm serve "$MODEL_PATH" \
 # Start Prefill (GPU 1)
 echo "[3/5] Starting Prefill (GPU 1, port 8101)..."
 KV_CONFIG='{"kv_connector":"P2pNcclConnector","kv_role":"kv_producer","kv_buffer_size":1000000000,"kv_port":14581,"kv_connector_extra_config":{"proxy_ip":"0.0.0.0","proxy_port":"30001","http_port":"8101","send_type":"PUT_ASYNC"}}'
-CUDA_VISIBLE_DEVICES=1 vllm serve "$MODEL_PATH" \
+CUDA_VISIBLE_DEVICES=1 python -m vllm.entrypoints.cli.main serve "$MODEL_PATH" \
     --host 0.0.0.0 --port 8101 \
     --max-model-len $MAX_MODEL_LEN \
     --gpu-memory-utilization $GPU_MEMORY_UTIL \
@@ -122,7 +122,7 @@ CUDA_VISIBLE_DEVICES=1 vllm serve "$MODEL_PATH" \
 # Start Decode (GPU 2)
 echo "[4/5] Starting Decode (GPU 2, port 8200)..."
 KV_CONFIG='{"kv_connector":"P2pNcclConnector","kv_role":"kv_consumer","kv_buffer_size":10000000000,"kv_port":14580,"kv_connector_extra_config":{"proxy_ip":"0.0.0.0","proxy_port":"30001","http_port":"8200","send_type":"PUT_ASYNC"}}'
-CUDA_VISIBLE_DEVICES=2 vllm serve "$MODEL_PATH" \
+CUDA_VISIBLE_DEVICES=2 python -m vllm.entrypoints.cli.main serve "$MODEL_PATH" \
     --host 0.0.0.0 --port 8200 \
     --max-model-len $MAX_MODEL_LEN \
     --gpu-memory-utilization $GPU_MEMORY_UTIL \
@@ -134,7 +134,7 @@ CUDA_VISIBLE_DEVICES=2 vllm serve "$MODEL_PATH" \
 # Start Decode (GPU 3)
 echo "[5/5] Starting Decode (GPU 3, port 8201)..."
 KV_CONFIG='{"kv_connector":"P2pNcclConnector","kv_role":"kv_consumer","kv_buffer_size":10000000000,"kv_port":14582,"kv_connector_extra_config":{"proxy_ip":"0.0.0.0","proxy_port":"30001","http_port":"8201","send_type":"PUT_ASYNC"}}'
-CUDA_VISIBLE_DEVICES=3 vllm serve "$MODEL_PATH" \
+CUDA_VISIBLE_DEVICES=3 python -m vllm.entrypoints.cli.main serve "$MODEL_PATH" \
     --host 0.0.0.0 --port 8201 \
     --max-model-len $MAX_MODEL_LEN \
     --gpu-memory-utilization $GPU_MEMORY_UTIL \

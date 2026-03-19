@@ -35,7 +35,7 @@ from transformers import AutoTokenizer
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_DIR)
 
-from src.config import MODEL_PATH, REQUEST_TIMEOUT_SEC
+from ppd.config import MODEL_PATH, REQUEST_TIMEOUT_SEC
 
 # Initialize tokenizer for accurate token counting
 _tokenizer = None

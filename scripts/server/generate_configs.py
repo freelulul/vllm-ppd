@@ -214,7 +214,7 @@ MAX_MODEL_LEN=8192
 GPU_MEMORY_UTIL=0.85
 
 LOG_DIR="$PROJECT_DIR/logs/{config_name}"
-SRC_DIR="$PROJECT_DIR/src"
+SRC_DIR="$PROJECT_DIR/ppd"
 mkdir -p "$LOG_DIR"
 rm -f "$LOG_DIR"/*.log 2>/dev/null || true
 
@@ -287,7 +287,7 @@ sleep 2
             script += f'''
 # Start Replica {s.gpu_id} (GPU {s.gpu_id})
 echo "[{step}/{len(servers) + 1}] Starting Replica (GPU {s.gpu_id}, port {s.port})..."
-CUDA_VISIBLE_DEVICES={s.gpu_id} vllm serve "$MODEL_PATH" \\
+CUDA_VISIBLE_DEVICES={s.gpu_id} python -m vllm.entrypoints.cli.main serve "$MODEL_PATH" \\
     --host 0.0.0.0 --port {s.port} \\
     --max-model-len $MAX_MODEL_LEN \\
     --gpu-memory-utilization $GPU_MEMORY_UTIL \\
@@ -301,7 +301,7 @@ CUDA_VISIBLE_DEVICES={s.gpu_id} vllm serve "$MODEL_PATH" \\
 # Start Prefill (GPU {s.gpu_id})
 echo "[{step}/{len(servers) + 1}] Starting Prefill (GPU {s.gpu_id}, port {s.port})..."
 KV_CONFIG='{{"kv_connector":"P2pNcclConnector","kv_role":"kv_producer","kv_buffer_size":1000000000,"kv_port":{s.kv_port},"kv_connector_extra_config":{{"proxy_ip":"0.0.0.0","proxy_port":"30001","http_port":"{s.port}","send_type":"PUT_ASYNC"}}}}'
-CUDA_VISIBLE_DEVICES={s.gpu_id} vllm serve "$MODEL_PATH" \\
+CUDA_VISIBLE_DEVICES={s.gpu_id} python -m vllm.entrypoints.cli.main serve "$MODEL_PATH" \\
     --host 0.0.0.0 --port {s.port} \\
     --max-model-len $MAX_MODEL_LEN \\
     --gpu-memory-utilization $GPU_MEMORY_UTIL \\
@@ -318,7 +318,7 @@ CUDA_VISIBLE_DEVICES={s.gpu_id} vllm serve "$MODEL_PATH" \\
 # Start {type_name} (GPU {s.gpu_id})
 echo "[{step}/{len(servers) + 1}] Starting {type_name} (GPU {s.gpu_id}, port {s.port})..."
 KV_CONFIG='{{"kv_connector":"P2pNcclConnector","kv_role":"kv_consumer","kv_buffer_size":10000000000,"kv_port":{s.kv_port},"kv_connector_extra_config":{{"proxy_ip":"0.0.0.0","proxy_port":"30001","http_port":"{s.port}","send_type":"PUT_ASYNC"}}}}'
-CUDA_VISIBLE_DEVICES={s.gpu_id} vllm serve "$MODEL_PATH" \\
+CUDA_VISIBLE_DEVICES={s.gpu_id} python -m vllm.entrypoints.cli.main serve "$MODEL_PATH" \\
     --host 0.0.0.0 --port {s.port} \\
     --max-model-len $MAX_MODEL_LEN \\
     --gpu-memory-utilization $GPU_MEMORY_UTIL \\

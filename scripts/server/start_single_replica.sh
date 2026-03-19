@@ -73,7 +73,7 @@ fi
 # Start single replica server
 echo ""
 echo "Starting vLLM server on GPU $GPU_ID..."
-CUDA_VISIBLE_DEVICES=$GPU_ID vllm serve "$MODEL_PATH" \
+CUDA_VISIBLE_DEVICES=$GPU_ID python -m vllm.entrypoints.cli.main serve "$MODEL_PATH" \
     --host 0.0.0.0 --port $PORT \
     --max-model-len $MAX_MODEL_LEN \
     --gpu-memory-utilization $GPU_MEMORY_UTIL \
@@ -121,5 +121,5 @@ echo "To run interference benchmark:"
 echo "  python scripts/tests/interference_benchmark.py --server-url http://localhost:$PORT"
 echo ""
 echo "To stop:"
-echo "  pkill -f 'vllm serve'"
+echo "  pkill -f 'python -m vllm.entrypoints.cli.main serve'"
 echo "=============================================="

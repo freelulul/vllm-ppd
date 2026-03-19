@@ -32,7 +32,7 @@ from dataclasses import dataclass, asdict, field
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 
-from src.config import MODEL_PATH
+from ppd.config import MODEL_PATH
 
 # ============================================================================
 # Configuration

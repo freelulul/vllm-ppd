@@ -50,7 +50,7 @@ from pathlib import Path
 # Configuration
 # ============================================================================
 
-from src.config import MODEL_PATH
+from ppd.config import MODEL_PATH
 
 PROXY_URL = "http://localhost:10001"
 

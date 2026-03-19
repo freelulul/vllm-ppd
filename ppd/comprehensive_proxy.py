@@ -896,7 +896,7 @@ def main():
         print(f"[PROXY] Weights: w_ttft={args.w_ttft}, w_tpot={args.w_tpot}")
 
         try:
-            from optimizer.ppd_decision_engine import PPDDecisionEngine
+            from ppd.optimizer.ppd_decision_engine import PPDDecisionEngine
             PPD_DECISION_ENGINE = PPDDecisionEngine(
                 benchmark_data_path=args.ppd_benchmark_path,
                 base_config=CONFIG_NAME,

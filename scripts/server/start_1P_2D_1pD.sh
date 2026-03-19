@@ -1,15 +1,15 @@
 #!/bin/bash
 # ============================================================================
-# Start Script for vLLM Configuration: 1P_3D
+# Start Script for vLLM Configuration: 1P_2D_1pD
 #
-# Architecture: 1P + 3D
+# Architecture: 1P + 2D + 1pD
 # 
 #   GPU0: P (port 8100)
 #   GPU1: D (port 8200)
 #   GPU2: D (port 8201)
-#   GPU3: D (port 8202)
+#   GPU3: pD (port 8202)
 #
-# Usage: ./start_1P_3D.sh
+# Usage: ./start_1P_2D_1pD.sh
 # ============================================================================
 
 set -e
@@ -40,14 +40,14 @@ source "$SCRIPT_DIR/config.sh"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
 GPU_MEMORY_UTIL="${GPU_MEMORY_UTILIZATION:-0.85}"
 
-LOG_DIR="$PROJECT_DIR/logs/1P_3D"
-SRC_DIR="$PROJECT_DIR/src"
+LOG_DIR="$PROJECT_DIR/logs/1P_2D_1pD"
+SRC_DIR="$PROJECT_DIR/ppd"
 mkdir -p "$LOG_DIR"
 rm -f "$LOG_DIR"/*.log 2>/dev/null || true
 
 echo "=============================================="
-echo "Starting vLLM Configuration: 1P_3D"
-echo "Architecture: 1P + 3D"
+echo "Starting vLLM Configuration: 1P_2D_1pD"
+echo "Architecture: 1P + 2D + 1pD"
 echo "=============================================="
 
 # NCCL settings for multi-GPU P2P
@@ -76,29 +76,17 @@ fi
 echo "[1/5] Starting Proxy..."
 PROXY_PORT=10001
 PROXY_CONTROL_PORT=30001
-
-# Build PPD arguments from environment variables
-PPD_ARGS=""
-if [ "$ENABLE_PPD_MODE" = "true" ]; then
-    PPD_ARGS="--enable-ppd-mode"
-    PPD_ARGS="$PPD_ARGS --ppd-benchmark-path ${PPD_BENCHMARK_PATH:-$PROJECT_DIR/results/comprehensive}"
-    [ -n "$W_TTFT" ] && PPD_ARGS="$PPD_ARGS --w-ttft $W_TTFT"
-    [ -n "$W_TPOT" ] && PPD_ARGS="$PPD_ARGS --w-tpot $W_TPOT"
-    echo "  PPD Mode: ENABLED (w_ttft=${W_TTFT:-1.0}, w_tpot=${W_TPOT:-1.0})"
-fi
-
 python "$SRC_DIR/comprehensive_proxy.py" \
-    --config 1P_3D \
+    --config 1P_2D_1pD \
     --http-port $PROXY_PORT \
     --zmq-port $PROXY_CONTROL_PORT \
-    $PPD_ARGS \
     > "$LOG_DIR/proxy.log" 2>&1 &
 sleep 2
 
 # Start Prefill (GPU 0)
 echo "[2/5] Starting Prefill (GPU 0, port 8100)..."
 KV_CONFIG='{"kv_connector":"P2pNcclConnector","kv_role":"kv_producer","kv_buffer_size":1000000000,"kv_port":14579,"kv_connector_extra_config":{"proxy_ip":"0.0.0.0","proxy_port":"30001","http_port":"8100","send_type":"PUT_ASYNC"}}'
-CUDA_VISIBLE_DEVICES=0 vllm serve "$MODEL_PATH" \
+CUDA_VISIBLE_DEVICES=0 python -m vllm.entrypoints.cli.main serve "$MODEL_PATH" \
     --host 0.0.0.0 --port 8100 \
     --max-model-len $MAX_MODEL_LEN \
     --gpu-memory-utilization $GPU_MEMORY_UTIL \
@@ -110,7 +98,7 @@ CUDA_VISIBLE_DEVICES=0 vllm serve "$MODEL_PATH" \
 # Start Decode (GPU 1)
 echo "[3/5] Starting Decode (GPU 1, port 8200)..."
 KV_CONFIG='{"kv_connector":"P2pNcclConnector","kv_role":"kv_consumer","kv_buffer_size":10000000000,"kv_port":14580,"kv_connector_extra_config":{"proxy_ip":"0.0.0.0","proxy_port":"30001","http_port":"8200","send_type":"PUT_ASYNC"}}'
-CUDA_VISIBLE_DEVICES=1 vllm serve "$MODEL_PATH" \
+CUDA_VISIBLE_DEVICES=1 python -m vllm.entrypoints.cli.main serve "$MODEL_PATH" \
     --host 0.0.0.0 --port 8200 \
     --max-model-len $MAX_MODEL_LEN \
     --gpu-memory-utilization $GPU_MEMORY_UTIL \
@@ -122,7 +110,7 @@ CUDA_VISIBLE_DEVICES=1 vllm serve "$MODEL_PATH" \
 # Start Decode (GPU 2)
 echo "[4/5] Starting Decode (GPU 2, port 8201)..."
 KV_CONFIG='{"kv_connector":"P2pNcclConnector","kv_role":"kv_consumer","kv_buffer_size":10000000000,"kv_port":14581,"kv_connector_extra_config":{"proxy_ip":"0.0.0.0","proxy_port":"30001","http_port":"8201","send_type":"PUT_ASYNC"}}'
-CUDA_VISIBLE_DEVICES=2 vllm serve "$MODEL_PATH" \
+CUDA_VISIBLE_DEVICES=2 python -m vllm.entrypoints.cli.main serve "$MODEL_PATH" \
     --host 0.0.0.0 --port 8201 \
     --max-model-len $MAX_MODEL_LEN \
     --gpu-memory-utilization $GPU_MEMORY_UTIL \
@@ -131,17 +119,17 @@ CUDA_VISIBLE_DEVICES=2 vllm serve "$MODEL_PATH" \
     --kv-transfer-config "$KV_CONFIG" \
     > "$LOG_DIR/decode2.log" 2>&1 &
 
-# Start Decode (GPU 3)
-echo "[5/5] Starting Decode (GPU 3, port 8202)..."
+# Start PPD-Decode (GPU 3)
+echo "[5/5] Starting PPD-Decode (GPU 3, port 8202)..."
 KV_CONFIG='{"kv_connector":"P2pNcclConnector","kv_role":"kv_consumer","kv_buffer_size":10000000000,"kv_port":14582,"kv_connector_extra_config":{"proxy_ip":"0.0.0.0","proxy_port":"30001","http_port":"8202","send_type":"PUT_ASYNC"}}'
-CUDA_VISIBLE_DEVICES=3 vllm serve "$MODEL_PATH" \
+CUDA_VISIBLE_DEVICES=3 python -m vllm.entrypoints.cli.main serve "$MODEL_PATH" \
     --host 0.0.0.0 --port 8202 \
     --max-model-len $MAX_MODEL_LEN \
     --gpu-memory-utilization $GPU_MEMORY_UTIL \
     --trust-remote-code --disable-log-requests \
     --enable-prefix-caching \
     --kv-transfer-config "$KV_CONFIG" \
-    > "$LOG_DIR/decode3.log" 2>&1 &
+    > "$LOG_DIR/ppd_decode3.log" 2>&1 &
 
 # Wait for servers
 echo ""
@@ -163,15 +151,15 @@ echo "  Proxy: $(curl -s http://localhost:$PROXY_PORT/status)"
 
 echo ""
 echo "=============================================="
-echo "Configuration 1P_3D ready!"
-echo "Architecture: 1P + 3D"
+echo "Configuration 1P_2D_1pD ready!"
+echo "Architecture: 1P + 2D + 1pD"
 echo "=============================================="
 echo "P: http://localhost:8100 (GPU 0)"
 echo "D: http://localhost:8200 (GPU 1)"
 echo "D: http://localhost:8201 (GPU 2)"
-echo "D: http://localhost:8202 (GPU 3)"
+echo "pD: http://localhost:8202 (GPU 3)"
 echo ""
 echo "Proxy: http://localhost:$PROXY_PORT"
 echo ""
-echo "To stop: ./scripts/server/stop_1P_3D.sh"
+echo "To stop: ./scripts/server/stop_1P_2D_1pD.sh"
 echo "=============================================="
