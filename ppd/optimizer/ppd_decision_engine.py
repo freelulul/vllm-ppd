@@ -17,6 +17,7 @@ and records which mode has better T2 TTFT for each (workload, qps) combination.
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict, Optional, Tuple, List
 from dataclasses import dataclass, field
@@ -308,6 +309,22 @@ class PPDDecisionEngine:
                     pd_t2_tpot = pd_result.get("turn2", {}).get("avg_tpot_ms", 0)
                     ppd_t2_tpot = ppd_result.get("turn2", {}).get("avg_tpot_ms", 0)
 
+                    # If PD benchmark failed (SR=0 or all-zero metrics),
+                    # PD is not viable — always use PPD (local processing)
+                    pd_sr = pd_result.get("success_rate", 0)
+                    if pd_sr == 0 or (pd_t2_ttft == 0 and pd_t2_tpot == 0):
+                        self.lookup_table[(ctx_class, workload_type, qps)] = True
+                        self.performance_data[(ctx_class, workload_type, qps)] = {
+                            "pd_ttft": pd_t2_ttft, "ppd_ttft": ppd_t2_ttft,
+                            "pd_tpot": pd_t2_tpot, "ppd_tpot": ppd_t2_tpot,
+                            "score": float('inf'),
+                        }
+                        logger.debug(
+                            f"  {ctx_class}_{workload_type} @ QPS={qps}: "
+                            f"PD benchmark failed (SR={pd_sr}), forcing PPD"
+                        )
+                        continue
+
                     # Calculate weighted score
                     score = self._calculate_score(pd_t2_ttft, ppd_t2_ttft, pd_t2_tpot, ppd_t2_tpot)
 
@@ -391,6 +408,21 @@ class PPDDecisionEngine:
         if turn == 1:
             self.stats.record("turn1", False, is_turn1=True)
             return False
+
+        # Short append-prefill bypass: when new input tokens are small,
+        # the TPOT degradation from local processing is negligible.
+        # Threshold configurable via PPD_BYPASS_THRESHOLD env var (default 512).
+        # - <128 tokens: <2% TPOT degradation (chatbot workloads)
+        # - 128-512 tokens: 2-20% TPOT degradation (moderate)
+        # - >512 tokens: >20% TPOT degradation (heavy, route to P)
+        bypass_threshold = int(os.environ.get("PPD_BYPASS_THRESHOLD", "512"))
+        if input_tokens < bypass_threshold:
+            self.stats.record("short_input_bypass", True)
+            logger.debug(
+                f"PPD decision: turn={turn}, input_tokens={input_tokens} < {bypass_threshold}, "
+                f"bypass to PPD (short append-prefill)"
+            )
+            return True
 
         # Classify the request
         ctx_class = classify_context_length(context_tokens)

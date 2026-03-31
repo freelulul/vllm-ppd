@@ -541,13 +541,14 @@ def select_servers(
             idx = hash(conv_hash) % len(replica_list)
             replica_addr = replica_list[idx]
 
-    # For PPD mode, Turn 2+ goes directly to pD
+    # For pD nodes: Turn 2+ always goes directly to pD (static x=1)
+    # pD nodes always use local prefix cache, no decision engine needed
     if routing_mode == "ppd" and current_turn > 1:
         routing_mode = "ppd_direct"
 
-    # Dynamic PPD mode: Turn 2+ can bypass prefill even on D servers
-    # This allows PD configs (like 2P_2D) to benefit from prefix caching
-    # when the decision engine determines it's beneficial
+    # For D nodes with dynamic PPD (--enable-ppd on D configs):
+    # Decision engine determines if Turn 2+ should bypass prefill
+    # and use local prefix cache instead of routing through P
     if routing_mode == "pd" and use_ppd_dynamic and current_turn > 1:
         routing_mode = "ppd_dynamic"
 
@@ -897,6 +898,8 @@ def main():
 
         try:
             from ppd.optimizer.ppd_decision_engine import PPDDecisionEngine
+            # PPD mode is designed for D-node configs (e.g., 3P_1D)
+            # The decision engine compares PD (base) vs pD (ppd) configs
             PPD_DECISION_ENGINE = PPDDecisionEngine(
                 benchmark_data_path=args.ppd_benchmark_path,
                 base_config=CONFIG_NAME,

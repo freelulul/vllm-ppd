@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import os
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
@@ -108,6 +109,20 @@ class P2pNcclConnector(KVConnectorBase_V1):
             if role == KVConnectorRole.WORKER
             else None
         )
+
+        # KV cache bytes per token for network latency simulation.
+        # Formula: 2 (K+V) × num_kv_heads × head_dim × dtype_bytes × num_layers
+        try:
+            _num_kv_heads = vllm_config.model_config.get_num_kv_heads(
+                vllm_config.parallel_config)
+            _head_dim = vllm_config.model_config.get_head_size()
+            _dtype_bytes = 2  # BF16/FP16
+            _num_layers = vllm_config.model_config.get_num_layers(
+                vllm_config.parallel_config)
+            self._kv_bytes_per_token = (
+                2 * _num_kv_heads * _head_dim * _dtype_bytes * _num_layers)
+        except Exception:
+            self._kv_bytes_per_token = 131072  # Fallback: Llama-3.1-8B
 
     # ==============================
     # Worker-side methods
@@ -237,6 +252,26 @@ class P2pNcclConnector(KVConnectorBase_V1):
                 num_layers_received += 1
                 inject_kv_into_layer(
                     layer, kv_cache, request.block_ids, request.request_id
+                )
+
+            # Simulate additional network latency for multi-node KV
+            # transfer. Computes expected transfer time at target
+            # bandwidth and sleeps for the difference vs actual NVLink
+            # time. Methodology follows TetriInfer (Hu et al., 2024).
+            _sim_bw = float(os.environ.get("SIMULATED_KV_BW_GBps", "0"))
+            if _sim_bw > 0 and num_layers_received > 0:
+                _actual = time.perf_counter() - req_start_time
+                _kv_bytes = request.num_tokens * self._kv_bytes_per_token
+                _target = _kv_bytes / (_sim_bw * 1e9)
+                _extra = max(0.0, _target - _actual)
+                if _extra > 0:
+                    time.sleep(_extra)
+                logger.debug(
+                    "KV_SIM: bw=%.0fGB/s, tokens=%d, kv=%.1fMB, "
+                    "actual=%.1fms, target=%.1fms, extra=%.1fms",
+                    _sim_bw, request.num_tokens,
+                    _kv_bytes / 1e6,
+                    _actual * 1000, _target * 1000, _extra * 1000,
                 )
 
             # Record timing for this request in global storage

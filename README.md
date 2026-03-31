@@ -29,14 +29,19 @@ Turn 2+: Client ──> Proxy ──> pD (append-prefill + decode, local prefix 
 
 ### Routing Modes
 
-| Mode | Config | Turn 1 | Turn 2+ | Trade-off |
-|------|--------|--------|---------|-----------|
-| **PD** (x=0) | P + D | P prefill &rarr; KV transfer &rarr; D | Same path every turn | Full isolation, KV transfer overhead |
-| **PPD** (x=1) | P + pD | P prefill &rarr; KV transfer &rarr; pD | pD-direct (prefix cache) | No T2+ transfer, less isolation |
-| **PPD-Dynamic** | P + pD | Decision engine selects | Per-request PD or PPD | Adaptive, best of both |
+| Mode | Server Config | Turn 1 | Turn 2+ | Trade-off |
+|------|--------------|--------|---------|-----------|
+| **PD** (x=0) | P + D | P prefill &rarr; KV &rarr; D | Same path every turn | Full isolation, KV transfer overhead |
+| **Static x=1** | P + pD | P prefill &rarr; KV &rarr; pD | pD-direct (local prefix cache) | No T2+ transfer, less isolation |
+| **PPD-Dynamic** | P + D + `--enable-ppd` | P prefill &rarr; KV &rarr; D | Decision engine per-request: local (`ppd_dynamic`) or via P (`pd`) | Adaptive, best of both |
 | **Replica** | R | Any worker | Same worker (prefix cache) | High throughput, no isolation |
 
-The routing parameter **x &isin; [0,1]** controls the fraction of decode nodes that handle append-prefill locally. PPD dynamically selects x per-request based on workload characteristics.
+**Important: D vs pD is a proxy-level distinction, not a vLLM-level one.** Both D and pD nodes run identical vLLM instances with the same `--enable-prefix-caching` and KV connector config. The difference is how the proxy routes Turn 2+ requests:
+
+- **pD node** (e.g., `3P_1pD`): Proxy always routes Turn 2+ directly to pD (`ppd_direct`). This is **static x=1** — no decision engine, no `--enable-ppd` flag needed.
+- **D node + PPD** (e.g., `3P_1D --enable-ppd`): Proxy consults the decision engine for each Turn 2+ request. Short inputs (&lt;512 tokens) are processed locally (`ppd_dynamic`); long inputs are routed to P to avoid TPOT degradation from heavy append-prefill.
+
+The routing parameter **x &isin; [0,1]** represents the fraction of Turn 2+ requests processed locally. Static x=1 (pD config) always processes locally; PPD-Dynamic adapts x per-request based on workload.
 
 ## Configuration Space
 
@@ -83,7 +88,9 @@ results/                          # Benchmark results
     comprehensive/                # Decision engine lookup data
 ```
 
-**vLLM patch:** A single modification in `vllm-source/vllm/distributed/kv_transfer/kv_connector/v1/p2p/p2p_nccl_connector.py` adds D-direct mode detection &mdash; when a request arrives at a pD node without PD-format request ID, it skips external KV loading and uses the local prefix cache instead.
+**vLLM patch:** Modifications in `vllm-source/vllm/distributed/kv_transfer/kv_connector/v1/p2p/p2p_nccl_connector.py`:
+- **D-direct mode detection:** When a request arrives at a pD node without PD-format request ID, it skips external KV loading and uses the local prefix cache instead.
+- **Network latency simulation:** Injects calibrated delay after KV transfer to emulate multi-node bandwidth (controlled by `SIMULATED_KV_BW_GBps`). Methodology follows TetriInfer (Hu et al., 2024).
 
 ## Quick Start
 
@@ -304,7 +311,11 @@ where:
 --w-ttft 1.0 --w-tpot 2.0
 ```
 
-The engine always returns PD for Turn 1 requests (no prefix cache available). For Turn 2+, it scores the request and selects PPD when the expected TTFT improvement outweighs the potential TPOT degradation.
+The engine always returns PD for Turn 1 requests (no prefix cache available). For Turn 2+:
+
+1. **Short input bypass:** If `input_tokens < PPD_BYPASS_THRESHOLD` (default 512), directly use PPD — append-prefill of short inputs causes negligible TPOT degradation (&lt;2% for &lt;128 tokens).
+2. **PD failure fallback:** If the PD benchmark had zero success rate (SR=0) for the classified workload, PPD is forced — PD is not viable at that operating point.
+3. **Score-based routing:** Otherwise, the engine scores the request and selects PPD when the expected TTFT improvement outweighs the potential TPOT degradation.
 
 ## Port Assignments
 
@@ -329,6 +340,8 @@ The engine always returns PD for Turn 1 requests (no prefix cache available). Fo
 | `PPD_BENCHMARK_PATH` | `results/comprehensive` | Benchmark data for decision engine |
 | `W_TTFT` | `1.0` | TTFT improvement weight |
 | `W_TPOT` | `1.0` | TPOT degradation penalty weight |
+| `PPD_BYPASS_THRESHOLD` | `512` | Input token threshold for short-input PPD bypass |
+| `SIMULATED_KV_BW_GBps` | `0` (disabled) | Target KV transfer bandwidth in GB/s for network simulation |
 | `MAX_WAIT` | `300` | Server startup timeout (seconds) |
 
 ## Hardware Requirements

@@ -12,6 +12,11 @@ sbatch*
 
 # Paper source
 icml2026/
+ICML___PPD/
+rebuttal/
+.claude/
+CLAUDE.md
+pyrightconfig.json
 
 # Development files
 basic_exp_data.xlsx
@@ -35,6 +40,8 @@ vllm-source/vllm/_version.py
 vllm-source/vllm/vllm_flash_attn/*
 vllm-source/vllm/third_party/triton_kernels/*
 vllm-source/csrc/moe/marlin_moe_wna16/kernel_*
+vllm-source/.deps/
+vllm-source/csrc/quantization/machete/generated/
 .triton
 
 # ============================================================================
