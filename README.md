@@ -2,7 +2,7 @@
 
 **Dynamic Append-Prefill Routing for Disaggregated Multi-turn LLM Serving**
 
-[\[Paper\]](https://arxiv.org/abs/2603.13358)
+> 🎉 **Accepted at ICML 2026** — [\[Paper\]](https://arxiv.org/abs/2603.13358)
 
 In multi-turn conversations, Prefill-Decode (PD) disaggregation re-transfers the entire KV cache every turn, even when subsequent inputs are short. We observe that **append-prefill causes an order-of-magnitude less interference** to decode than full prefill (~2% vs ~48% TPOT degradation). This enables a new routing dimension: selectively processing append-prefill locally on decode nodes to eliminate KV transfer overhead while preserving decode quality.
 
@@ -357,7 +357,7 @@ If you use PPD in your research, please cite:
 ```bibtex
 @misc{li2026prefillsequalppddisaggregation,
       title={Not All Prefills Are Equal: PPD Disaggregation for Multi-turn LLM Serving},
-      author={Zongze Li and Jingyu Liu and Zach Xu and Yineng Zhang and Tahseen Rabbani and Ce Zhang},
+      author={Zongze Li and Jingyu Liu and Zhen Xu and Yineng Zhang and Tahseen Rabbani and Ce Zhang},
       year={2026},
       eprint={2603.13358},
       archivePrefix={arXiv},
